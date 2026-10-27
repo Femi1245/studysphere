@@ -1,0 +1,38 @@
+-- Expand Nigeria institution catalogue for search/suggest
+INSERT INTO public.institutions (id, country_id, name, institution_type, state_region, is_active)
+VALUES
+  ('a1000110-0000-4000-8000-000000000110', 'a1000001-0000-4000-8000-000000000001', 'Ahmadu Bello University', 'university', 'Kaduna', true),
+  ('a1000111-0000-4000-8000-000000000111', 'a1000001-0000-4000-8000-000000000001', 'University of Nigeria, Nsukka', 'university', 'Enugu', true),
+  ('a1000112-0000-4000-8000-000000000112', 'a1000001-0000-4000-8000-000000000001', 'University of Benin', 'university', 'Edo', true),
+  ('a1000113-0000-4000-8000-000000000113', 'a1000001-0000-4000-8000-000000000001', 'University of Ilorin', 'university', 'Kwara', true),
+  ('a1000114-0000-4000-8000-000000000114', 'a1000001-0000-4000-8000-000000000001', 'University of Port Harcourt', 'university', 'Rivers', true),
+  ('a1000115-0000-4000-8000-000000000115', 'a1000001-0000-4000-8000-000000000001', 'Federal University of Technology, Akure', 'university', 'Ondo', true),
+  ('a1000116-0000-4000-8000-000000000116', 'a1000001-0000-4000-8000-000000000001', 'Federal University of Technology, Minna', 'university', 'Niger', true),
+  ('a1000117-0000-4000-8000-000000000117', 'a1000001-0000-4000-8000-000000000001', 'Lagos State University', 'university', 'Lagos', true),
+  ('a1000118-0000-4000-8000-000000000118', 'a1000001-0000-4000-8000-000000000001', 'Covenant University', 'university', 'Ogun', true),
+  ('a1000119-0000-4000-8000-000000000119', 'a1000001-0000-4000-8000-000000000001', 'Bayero University Kano', 'university', 'Kano', true),
+  ('a1000120-0000-4000-8000-000000000120', 'a1000001-0000-4000-8000-000000000001', 'Nnamdi Azikiwe University', 'university', 'Anambra', true),
+  ('a1000121-0000-4000-8000-000000000121', 'a1000001-0000-4000-8000-000000000001', 'University of Jos', 'university', 'Plateau', true),
+  ('a1000122-0000-4000-8000-000000000122', 'a1000001-0000-4000-8000-000000000001', 'University of Calabar', 'university', 'Cross River', true),
+  ('a1000123-0000-4000-8000-000000000123', 'a1000001-0000-4000-8000-000000000001', 'Federal University of Agriculture, Abeokuta', 'university', 'Ogun', true),
+  ('a1000124-0000-4000-8000-000000000124', 'a1000001-0000-4000-8000-000000000001', 'Afe Babalola University', 'university', 'Ekiti', true),
+  ('a1000125-0000-4000-8000-000000000125', 'a1000001-0000-4000-8000-000000000001', 'Babcock University', 'university', 'Ogun', true),
+  ('a1000130-0000-4000-8000-000000000130', 'a1000001-0000-4000-8000-000000000001', 'Federal Polytechnic, Ilaro', 'polytechnic', 'Ogun', true),
+  ('a1000131-0000-4000-8000-000000000131', 'a1000001-0000-4000-8000-000000000001', 'Federal Polytechnic, Nekede', 'polytechnic', 'Imo', true),
+  ('a1000132-0000-4000-8000-000000000132', 'a1000001-0000-4000-8000-000000000001', 'Kaduna Polytechnic', 'polytechnic', 'Kaduna', true),
+  ('a1000133-0000-4000-8000-000000000133', 'a1000001-0000-4000-8000-000000000001', 'Auchi Polytechnic', 'polytechnic', 'Edo', true),
+  ('a1000134-0000-4000-8000-000000000134', 'a1000001-0000-4000-8000-000000000001', 'Lagos State Polytechnic', 'polytechnic', 'Lagos', true),
+  ('a1000135-0000-4000-8000-000000000135', 'a1000001-0000-4000-8000-000000000001', 'The Polytechnic, Ibadan', 'polytechnic', 'Oyo', true),
+  ('a1000136-0000-4000-8000-000000000136', 'a1000001-0000-4000-8000-000000000001', 'Rufus Giwa Polytechnic', 'polytechnic', 'Ondo', true),
+  ('a1000140-0000-4000-8000-000000000140', 'a1000001-0000-4000-8000-000000000001', 'Federal College of Education, Zaria', 'college_of_education', 'Kaduna', true),
+  ('a1000141-0000-4000-8000-000000000141', 'a1000001-0000-4000-8000-000000000001', 'Adeyemi College of Education', 'college_of_education', 'Ondo', true),
+  ('a1000142-0000-4000-8000-000000000142', 'a1000001-0000-4000-8000-000000000001', 'Federal College of Education (Special), Oyo', 'college_of_education', 'Oyo', true),
+  ('a1000143-0000-4000-8000-000000000143', 'a1000001-0000-4000-8000-000000000001', 'Alvan Ikoku Federal College of Education', 'college_of_education', 'Imo', true),
+  ('a1000150-0000-4000-8000-000000000150', 'a1000001-0000-4000-8000-000000000001', 'King''s College Lagos', 'secondary', 'Lagos', true),
+  ('a1000151-0000-4000-8000-000000000151', 'a1000001-0000-4000-8000-000000000001', 'Queen''s College Lagos', 'secondary', 'Lagos', true),
+  ('a1000152-0000-4000-8000-000000000152', 'a1000001-0000-4000-8000-000000000001', 'Federal Government College, Ijanikin', 'secondary', 'Lagos', true)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  institution_type = EXCLUDED.institution_type,
+  state_region = EXCLUDED.state_region,
+  is_active = EXCLUDED.is_active;

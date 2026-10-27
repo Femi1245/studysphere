@@ -42,8 +42,13 @@ import { useAuth } from '@/contexts/auth-context'
 import { trySupabase } from '@/lib/supabase/client'
 import { cn, formatDuration } from '@/lib/utils'
 import type {
+  ActivityEvent,
+  CatalogueCourse,
   Note,
+  Quiz,
   QuizAttempt,
+  StudentCourseEnrolment,
+  StudentRecommendation,
   StudySession,
   StudyTask,
   Subject,
@@ -73,7 +78,13 @@ export function DashboardPage() {
   const [sessions, setSessions] = useState<StudySession[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [attempts, setAttempts] = useState<QuizAttempt[]>([])
+  const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [dueFlashcards, setDueFlashcards] = useState(0)
+  const [enrolments, setEnrolments] = useState<
+    (StudentCourseEnrolment & { catalogue_courses: CatalogueCourse | null })[]
+  >([])
+  const [activity, setActivity] = useState<ActivityEvent[]>([])
+  const [recommendations, setRecommendations] = useState<StudentRecommendation[]>([])
 
   const supabase = trySupabase()
 
@@ -90,6 +101,10 @@ export function DashboardPage() {
         notesRes,
         attemptsRes,
         flashRes,
+        enrRes,
+        actRes,
+        recRes,
+        quizRes,
       ] = await Promise.all([
         supabase
           .from('study_tasks')
@@ -122,6 +137,26 @@ export function DashboardPage() {
           .select('id', { count: 'exact', head: true })
           .eq('user_id', user.id)
           .lte('next_review_at', new Date().toISOString()),
+        supabase
+          .from('student_course_enrolments')
+          .select('*, catalogue_courses(*)')
+          .eq('user_id', user.id)
+          .eq('status', 'active')
+          .limit(6),
+        supabase
+          .from('activity_events')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(5),
+        supabase
+          .from('student_recommendations')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('dismissed', false)
+          .order('created_at', { ascending: false })
+          .limit(5),
+        supabase.from('quizzes').select('*').eq('user_id', user.id),
       ])
 
       if (cancelled) return
@@ -131,6 +166,10 @@ export function DashboardPage() {
       setNotes((notesRes.data as Note[]) ?? [])
       setAttempts((attemptsRes.data as QuizAttempt[]) ?? [])
       setDueFlashcards(flashRes.count ?? 0)
+      setEnrolments((enrRes.data as typeof enrolments) ?? [])
+      setActivity((actRes.data as ActivityEvent[]) ?? [])
+      setRecommendations((recRes.data as StudentRecommendation[]) ?? [])
+      setQuizzes((quizRes.data as Quiz[]) ?? [])
       setLoading(false)
     }
 
@@ -193,6 +232,30 @@ export function DashboardPage() {
   const completedSessions = sessions.filter((s) => s.duration_seconds > 0).length
   const focusGoal = preferences?.focus_minutes ?? profile?.preferred_study_duration ?? 25
   const weekMinutes = sessions.reduce((acc, s) => acc + s.duration_seconds / 60, 0)
+
+  const quizStats = useMemo(() => {
+    const submitted = attempts.filter((a) => a.submitted_at)
+    const withQuiz = submitted.map((a) => {
+      const q = quizzes.find((z) => z.id === a.quiz_id)
+      const pct = a.max_score ? (a.score / a.max_score) * 100 : 0
+      const pass = pct >= (q?.pass_mark ?? 50)
+      return { pct, pass }
+    })
+    const avg =
+      withQuiz.length === 0
+        ? 0
+        : Math.round(withQuiz.reduce((s, x) => s + x.pct, 0) / withQuiz.length)
+    const highest = withQuiz.length ? Math.round(Math.max(...withQuiz.map((x) => x.pct))) : 0
+    const passed = withQuiz.filter((x) => x.pass).length
+    const failed = withQuiz.filter((x) => !x.pass).length
+    return { total: submitted.length, avg, highest, passed, failed }
+  }, [attempts, quizzes])
+
+  const dismissRecommendation = async (id: string) => {
+    if (!supabase) return
+    await supabase.from('student_recommendations').update({ dismissed: true }).eq('id', id)
+    setRecommendations((prev) => prev.filter((r) => r.id !== id))
+  }
 
   if (!supabase) return <SupabaseSetupBanner />
 
@@ -269,6 +332,59 @@ export function DashboardPage() {
           <CardContent className="pt-6">
             <p className="text-2xl font-bold">{dueFlashcards}</p>
             <p className="text-sm text-ink-muted">Flashcards due</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {enrolments.length > 0 ? (
+        <Card className="rounded-2xl">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-lg">Enrolled courses</CardTitle>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/app/courses">Library</Link>
+            </Button>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {enrolments.map((e) =>
+              e.catalogue_courses ? (
+                <Link
+                  key={e.id}
+                  to={`/app/courses/${e.catalogue_course_id}`}
+                  className="rounded-xl border border-border px-3 py-2 text-sm hover:bg-primary-50 dark:hover:bg-primary-900/30"
+                >
+                  {e.catalogue_courses.code}
+                </Link>
+              ) : null,
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="rounded-2xl">
+          <CardContent className="pt-6">
+            <p className="text-2xl font-bold">{quizStats.total}</p>
+            <p className="text-sm text-ink-muted">Quizzes taken</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardContent className="pt-6">
+            <p className="text-2xl font-bold">{quizStats.avg}%</p>
+            <p className="text-sm text-ink-muted">Average score</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardContent className="pt-6">
+            <p className="text-2xl font-bold">{quizStats.highest}%</p>
+            <p className="text-sm text-ink-muted">Highest score</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardContent className="pt-6">
+            <p className="text-2xl font-bold">
+              {quizStats.passed}/{quizStats.passed + quizStats.failed || 0}
+            </p>
+            <p className="text-sm text-ink-muted">Pass / fail</p>
           </CardContent>
         </Card>
       </div>
@@ -402,7 +518,23 @@ export function DashboardPage() {
             <CardTitle className="text-lg">Recommended next</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {overdueTasks.length === 0 && dueFlashcards === 0 ? (
+            {recommendations.map((r) => (
+              <div key={r.id} className="rounded-xl border border-accent-200 bg-accent-50 px-3 py-2 text-sm dark:bg-accent-900/20">
+                <p className="font-medium">{r.title}</p>
+                <p className="text-ink-muted">{r.body}</p>
+                <div className="mt-2 flex gap-2">
+                  {r.action_href ? (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={r.action_href}>Go</Link>
+                    </Button>
+                  ) : null}
+                  <Button type="button" size="sm" variant="ghost" onClick={() => void dismissRecommendation(r.id)}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {overdueTasks.length === 0 && dueFlashcards === 0 && recommendations.length === 0 ? (
               <p className="text-sm text-ink-muted">You&apos;re caught up — great work!</p>
             ) : null}
             {overdueTasks.slice(0, 3).map((t) => (
@@ -446,6 +578,31 @@ export function DashboardPage() {
                     >
                       {n.title}
                     </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-lg">Recent activity</CardTitle>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/app/activity">All</Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {activity.length === 0 ? (
+              <EmptyState title="No activity yet" />
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {activity.map((e) => (
+                  <li key={e.id} className="flex justify-between">
+                    <span>{e.event_type.replaceAll('_', ' ')}</span>
+                    <span className="text-ink-muted">
+                      {format(parseISO(e.created_at), 'MMM d')}
+                    </span>
                   </li>
                 ))}
               </ul>

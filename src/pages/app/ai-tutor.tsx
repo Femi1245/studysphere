@@ -12,7 +12,7 @@ import { trySupabase } from '@/lib/supabase/client'
 import type { AiConversation, AiMessage } from '@/types/database'
 
 export function AiTutorPage() {
-  const { user, profile } = useAuth()
+  const { user, profile, session } = useAuth()
   const supabase = trySupabase()
   const [conversations, setConversations] = useState<AiConversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -22,6 +22,7 @@ export function AiTutorPage() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [setupRequired, setSetupRequired] = useState(false)
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !user) return
@@ -69,17 +70,88 @@ export function AiTutorPage() {
     }
   }
 
-  const send = async () => {
-    if (!supabase || !user || !input.trim() || sending) return
+  const askTutor = async (userContent: string, convId: string, history: AiMessage[]) => {
+    const token = session?.access_token
+    if (!token) throw new Error('Not signed in')
+
+    const payload = {
+      message: userContent,
+      conversation_id: convId,
+      education_level: profile?.education_level ?? null,
+      history: history
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({ role: m.role, content: m.content })),
+    }
+
+    // Prefer local/Vercel /api/ai-tutor (Groq). Fall back to Supabase Edge Function.
+    const res = await fetch('/api/ai-tutor', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+
+    if (res.status !== 404) {
+      const data = (await res.json()) as {
+        reply?: string
+        configured?: boolean
+        error?: string
+        detail?: string
+      }
+      if (res.status === 503 || data.configured === false) {
+        setSetupRequired(true)
+        throw new Error(
+          data.error ||
+            'Add GROQ_API_KEY to .env.local (free key at console.groq.com), then restart npm run dev.',
+        )
+      }
+      if (!res.ok) {
+        throw new Error(
+          [data.error, data.detail].filter(Boolean).join(': ') ||
+            `AI request failed (${res.status})`,
+        )
+      }
+      return data.reply || 'No response'
+    }
+
+    if (!supabase) throw new Error('Supabase not configured')
+    const { data: fnData, error: fnError } = await supabase.functions.invoke('ai-tutor', {
+      body: payload,
+    })
+    if (fnError) {
+      const ctx = fnData as { configured?: boolean; error?: string } | null
+      if (ctx?.configured === false) {
+        setSetupRequired(true)
+        throw new Error(ctx.error || 'AI not configured')
+      }
+      throw new Error(fnError.message)
+    }
+    const reply =
+      typeof fnData === 'object' && fnData && 'reply' in fnData
+        ? String((fnData as { reply: string }).reply)
+        : null
+    if (!reply) throw new Error('No response from AI')
+    return reply
+  }
+
+  const send = async (overrideMessage?: string) => {
+    if (!supabase || !user || sending) return
+    const userContent = (overrideMessage ?? input).trim()
+    if (!userContent) return
+
     setSending(true)
     setError(null)
     setSetupRequired(false)
+    setLastFailedMessage(null)
+    if (!overrideMessage) setInput('')
 
     let convId = activeId
     if (!convId) {
       const { data } = await supabase
         .from('ai_conversations')
-        .insert({ user_id: user.id, title: input.trim().slice(0, 40) })
+        .insert({ user_id: user.id, title: userContent.slice(0, 40) })
         .select('id')
         .single()
       convId = data?.id ?? null
@@ -90,63 +162,44 @@ export function AiTutorPage() {
       return
     }
 
-    const userContent = input.trim()
-    setInput('')
     await supabase.from('ai_messages').insert({
       conversation_id: convId,
       user_id: user.id,
       role: 'user',
       content: userContent,
     })
-    setMessages((m) => [
-      ...m,
-      {
-        id: crypto.randomUUID(),
-        conversation_id: convId!,
-        user_id: user.id,
-        role: 'user',
-        content: userContent,
-        created_at: new Date().toISOString(),
-      },
-    ])
 
-    const { data: fnData, error: fnError } = await supabase.functions.invoke('ai-tutor', {
-      body: {
-        message: userContent,
-        conversation_id: convId,
-        education_level: profile?.education_level ?? null,
-      },
-    })
-
-    if (fnError) {
-      const status = (fnError as { status?: number }).status
-      const ctx = fnData as { configured?: boolean; error?: string } | null
-      if (status === 503 || ctx?.configured === false) {
-        setSetupRequired(true)
-        setError('AI Tutor is not configured on the server. Deploy the ai-tutor edge function and API keys.')
-      } else {
-        setError(fnError.message)
-      }
-      setSending(false)
-      return
-    }
-
-    const reply =
-      typeof fnData === 'object' && fnData && 'reply' in fnData
-        ? String((fnData as { reply: string }).reply)
-        : typeof fnData === 'string'
-          ? fnData
-          : 'No response'
-
-    await supabase.from('ai_messages').insert({
+    const optimisticUser: AiMessage = {
+      id: crypto.randomUUID(),
       conversation_id: convId,
       user_id: user.id,
-      role: 'assistant',
-      content: reply,
-    })
-    await loadMessages(convId)
-    await loadConversations()
-    setSending(false)
+      role: 'user',
+      content: userContent,
+      created_at: new Date().toISOString(),
+    }
+    const historyForAi = [...messages, optimisticUser]
+    setMessages(historyForAi)
+
+    try {
+      const reply = await askTutor(userContent, convId, historyForAi)
+      await supabase.from('ai_messages').insert({
+        conversation_id: convId,
+        user_id: user.id,
+        role: 'assistant',
+        content: reply,
+      })
+      await supabase
+        .from('ai_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', convId)
+      await loadMessages(convId)
+      await loadConversations()
+    } catch (e) {
+      setLastFailedMessage(userContent)
+      setError(e instanceof Error ? e.message : 'AI request failed')
+    } finally {
+      setSending(false)
+    }
   }
 
   if (!supabase) return <SupabaseSetupBanner />
@@ -185,7 +238,7 @@ export function AiTutorPage() {
             <EmptyState
               icon={Bot}
               title="Ask your AI tutor"
-              description="Responses are AI-generated and not guaranteed to be accurate. Verify important facts with your materials."
+              description="Powered by Groq when GROQ_API_KEY is set. Responses are AI-generated and not guaranteed accurate."
             />
           ) : (
             messages.map((m) => (
@@ -211,19 +264,44 @@ export function AiTutorPage() {
 
         {setupRequired ? (
           <Card className="m-4 rounded-xl border-accent-200 bg-accent-50 dark:bg-accent-900/20">
-            <CardContent className="py-3 text-sm">
-              AI Tutor setup required. Configure the Supabase edge function — responses are not simulated.
+            <CardContent className="space-y-2 py-3 text-sm">
+              <p className="font-medium">Connect free Groq AI</p>
+              <ol className="list-decimal space-y-1 pl-4 text-ink-muted">
+                <li>
+                  Get a key at{' '}
+                  <a
+                    className="text-accent-600 underline"
+                    href="https://console.groq.com/keys"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    console.groq.com/keys
+                  </a>
+                </li>
+                <li>
+                  Add <code className="text-xs">GROQ_API_KEY=gsk_...</code> to{' '}
+                  <code className="text-xs">.env.local</code>
+                </li>
+                <li>Restart the dev server, then try again</li>
+              </ol>
             </CardContent>
           </Card>
         ) : null}
 
         {error && !setupRequired ? (
-          <div className="mx-4 mb-2 flex items-center justify-between rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+          <div className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
             <span>{error}</span>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void send()}>
-              <RefreshCw className="h-4 w-4" />
-              Retry
-            </Button>
+            {lastFailedMessage ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void send(lastFailedMessage)}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            ) : null}
           </div>
         ) : null}
 

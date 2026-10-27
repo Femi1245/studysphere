@@ -7,7 +7,12 @@ import { ForgotPasswordPage } from '@/pages/auth/forgot-password'
 import { LoginPage } from '@/pages/auth/login'
 import { ResetPasswordPage } from '@/pages/auth/reset-password'
 import { SignupPage } from '@/pages/auth/signup'
+import { AcademicProfilePage } from '@/pages/app/academic-profile'
+import { ActivityPage } from '@/pages/app/activity'
 import { AdminPage } from '@/pages/app/admin'
+import { CourseDetailPage } from '@/pages/app/courses/detail'
+import { CoursesLibraryPage } from '@/pages/app/courses'
+import { CourseReaderPage } from '@/pages/app/courses/reader'
 import { AiTutorPage } from '@/pages/app/ai-tutor'
 import { DashboardPage } from '@/pages/app/dashboard'
 import { FlashcardsPage } from '@/pages/app/flashcards'
@@ -18,6 +23,8 @@ import { OnboardingPage } from '@/pages/app/onboarding'
 import { PlannerPage } from '@/pages/app/planner'
 import { ProgressPage } from '@/pages/app/progress'
 import { QuizDetailPage } from '@/pages/app/quizzes/detail'
+import { QuizPracticePage } from '@/pages/app/quizzes/practice'
+import { QuizTakePage } from '@/pages/app/quizzes/take'
 import { QuizzesPage } from '@/pages/app/quizzes'
 import { SettingsPage } from '@/pages/app/settings'
 import { SubjectDetailPage } from '@/pages/app/subjects/detail'
@@ -59,7 +66,14 @@ export default function App() {
           <Route path="notes" element={<NotesPage />} />
           <Route path="notes/new" element={<NoteEditorPage />} />
           <Route path="notes/:id" element={<NoteEditorPage />} />
+          <Route path="courses" element={<CoursesLibraryPage />} />
+          <Route path="courses/:id" element={<CourseDetailPage />} />
+          <Route path="courses/materials/:materialId" element={<CourseReaderPage />} />
+          <Route path="academic-profile" element={<AcademicProfilePage />} />
+          <Route path="activity" element={<ActivityPage />} />
           <Route path="quizzes" element={<QuizzesPage />} />
+          <Route path="quizzes/practice" element={<QuizPracticePage />} />
+          <Route path="quizzes/:id/take" element={<QuizTakePage />} />
           <Route path="quizzes/:id" element={<QuizDetailPage />} />
           <Route path="flashcards" element={<FlashcardsPage />} />
           <Route path="timer" element={<TimerPage />} />

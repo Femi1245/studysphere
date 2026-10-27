@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useAuth } from '@/contexts/auth-context'
+import { logActivity } from '@/lib/activity'
 import { trySupabase } from '@/lib/supabase/client'
 import { formatSeconds } from '@/lib/utils'
 import type { StudySession, Subject } from '@/types/database'
@@ -140,6 +141,12 @@ export function TimerPage() {
       started_at: new Date(started).toISOString(),
       ended_at: new Date().toISOString(),
       duration_seconds: elapsed,
+    })
+    void logActivity(supabase, {
+      userId: user.id,
+      eventType: 'focus_session_completed',
+      subjectId: subjectId || null,
+      metadata: { duration_seconds: elapsed },
     })
     const { data } = await supabase
       .from('study_sessions')

@@ -18,6 +18,7 @@ Apply the SQL migration in `supabase/migrations/` to your Supabase project befor
 ## Documentation
 
 - [Environment variables](docs/ENVIRONMENT.md)
+- [Free AI with Groq](docs/AI_GROQ.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Native apps (Capacitor)](docs/NATIVE.md)
 - [Testing checklist](docs/TESTING.md)

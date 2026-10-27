@@ -224,6 +224,9 @@ export function SettingsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <Button asChild variant="outline" type="button">
+              <Link to="/app/academic-profile">Edit academic profile &amp; courses</Link>
+            </Button>
             <Button type="submit">Save profile</Button>
           </form>
         </CardContent>

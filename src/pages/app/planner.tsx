@@ -71,6 +71,7 @@ export function PlannerPage() {
   const supabase = trySupabase()
   const [tasks, setTasks] = useState<StudyTask[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
+  const [courseHints, setCourseHints] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<StudyTask | null>(null)
@@ -80,12 +81,27 @@ export function PlannerPage() {
   const load = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
-    const [tRes, sRes] = await Promise.all([
+    const [tRes, sRes, eRes] = await Promise.all([
       supabase.from('study_tasks').select('*').eq('user_id', user.id).order('due_at'),
       supabase.from('subjects').select('*').eq('user_id', user.id).order('name'),
+      supabase
+        .from('student_course_enrolments')
+        .select('catalogue_courses(code, title)')
+        .eq('user_id', user.id)
+        .eq('status', 'active'),
     ])
     setTasks((tRes.data as StudyTask[]) ?? [])
     setSubjects((sRes.data as Subject[]) ?? [])
+    const hints: string[] = []
+    for (const row of eRes.data ?? []) {
+      const raw = (row as { catalogue_courses?: unknown }).catalogue_courses
+      const course = Array.isArray(raw) ? raw[0] : raw
+      if (course && typeof course === 'object' && 'code' in course && 'title' in course) {
+        const c = course as { code: string; title: string }
+        hints.push(`Study ${c.code}: ${c.title}`)
+      }
+    }
+    setCourseHints(hints.slice(0, 6))
     setLoading(false)
   }, [supabase, user])
 
@@ -208,6 +224,31 @@ export function PlannerPage() {
           New task
         </Button>
       </div>
+
+      {courseHints.length > 0 ? (
+        <Card className="rounded-2xl border-primary-100 bg-primary-50/50 dark:bg-primary-900/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Suggested from your courses</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {courseHints.map((hint) => (
+              <Button
+                key={hint}
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setEditing(null)
+                  setForm({ ...defaultForm, title: hint })
+                  setDialogOpen(true)
+                }}
+              >
+                {hint}
+              </Button>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Tabs defaultValue="list">
         <TabsList className="rounded-xl">

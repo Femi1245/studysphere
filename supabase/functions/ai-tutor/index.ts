@@ -21,6 +21,7 @@ interface TutorRequestBody {
   message: string;
   education_level?: string;
   context_note?: string;
+  history?: Array<{ role: string; content: string }>;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -39,13 +40,24 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
+  // Prefer free Groq; fall back to OpenAI if configured
+  const groqKey = Deno.env.get("GROQ_API_KEY");
   const openAiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!openAiKey) {
+  const apiKey = groqKey || openAiKey;
+  if (!apiKey) {
     return jsonResponse(
       { error: "AI not configured", configured: false },
       503,
     );
   }
+
+  const useGroq = Boolean(groqKey);
+  const endpoint = useGroq
+    ? "https://api.groq.com/openai/v1/chat/completions"
+    : "https://api.openai.com/v1/chat/completions";
+  const model = useGroq
+    ? (Deno.env.get("GROQ_MODEL") ?? "openai/gpt-oss-20b")
+    : (Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini");
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -96,58 +108,6 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  let conversationId = body.conversation_id;
-
-  if (conversationId) {
-    const { data: conv, error: convError } = await supabase
-      .from("ai_conversations")
-      .select("id")
-      .eq("id", conversationId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (convError || !conv) {
-      return jsonResponse({ error: "Conversation not found" }, 404);
-    }
-  } else {
-    const title = body.message.trim().slice(0, 80) || "New chat";
-    const { data: newConv, error: createError } = await supabase
-      .from("ai_conversations")
-      .insert({ user_id: user.id, title })
-      .select("id")
-      .single();
-
-    if (createError || !newConv) {
-      console.error("Create conversation failed:", createError);
-      return jsonResponse({ error: "Could not create conversation" }, 500);
-    }
-    conversationId = newConv.id;
-  }
-
-  const { error: userMsgError } = await supabase.from("ai_messages").insert({
-    conversation_id: conversationId,
-    user_id: user.id,
-    role: "user",
-    content: body.message.trim(),
-  });
-
-  if (userMsgError) {
-    console.error("Save user message failed:", userMsgError);
-    return jsonResponse({ error: "Could not save message" }, 500);
-  }
-
-  const { data: history, error: historyError } = await supabase
-    .from("ai_messages")
-    .select("role, content")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
-    .limit(40);
-
-  if (historyError) {
-    console.error("Load history failed:", historyError);
-    return jsonResponse({ error: "Could not load conversation history" }, 500);
-  }
-
   let systemContent = SYSTEM_PROMPT_BASE;
   if (body.education_level) {
     systemContent += `\n\nStudent education level: ${body.education_level}`;
@@ -156,57 +116,53 @@ Deno.serve(async (req: Request) => {
     systemContent += `\n\nAdditional context from the student: ${body.context_note}`;
   }
 
+  const history = body.history ?? [];
+  if (body.conversation_id && history.length === 0) {
+    const { data: dbHistory } = await supabase
+      .from("ai_messages")
+      .select("role, content")
+      .eq("conversation_id", body.conversation_id)
+      .order("created_at", { ascending: true })
+      .limit(40);
+    if (dbHistory) history.push(...dbHistory);
+  }
+
   const chatMessages = [
     { role: "system", content: systemContent },
-    ...(history ?? [])
+    ...history
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: body.message.trim() },
   ];
 
-  const openAiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+  const aiRes = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${openAiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+      model,
       messages: chatMessages,
       temperature: 0.7,
     }),
   });
 
-  if (!openAiRes.ok) {
-    const errText = await openAiRes.text();
-    console.error("OpenAI error:", openAiRes.status, errText);
-    return jsonResponse({ error: "AI provider error" }, 502);
+  if (!aiRes.ok) {
+    const errText = await aiRes.text();
+    console.error("AI provider error:", aiRes.status, errText);
+    return jsonResponse({ error: "AI provider error", detail: errText.slice(0, 200) }, 502);
   }
 
-  const completion = await openAiRes.json();
+  const completion = await aiRes.json();
   const assistantContent =
     completion.choices?.[0]?.message?.content?.trim() ??
     "I could not generate a response. Please try again.";
 
-  const { error: assistantMsgError } = await supabase.from("ai_messages").insert({
-    conversation_id: conversationId,
-    user_id: user.id,
-    role: "assistant",
-    content: assistantContent,
-  });
-
-  if (assistantMsgError) {
-    console.error("Save assistant message failed:", assistantMsgError);
-    return jsonResponse({ error: "Could not save assistant reply" }, 500);
-  }
-
-  await supabase
-    .from("ai_conversations")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", conversationId);
-
   return jsonResponse({
     configured: true,
-    conversation_id: conversationId,
+    conversation_id: body.conversation_id ?? null,
     reply: assistantContent,
+    provider: useGroq ? "groq" : "openai",
   });
 });

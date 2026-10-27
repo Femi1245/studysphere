@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/auth-context'
+import { logActivity } from '@/lib/activity'
 import { trySupabase } from '@/lib/supabase/client'
 import { formatSeconds } from '@/lib/utils'
 import type { QuestionType, Quiz, QuizAnswer, QuizQuestion } from '@/types/database'
@@ -163,6 +164,23 @@ export function QuizDetailPage() {
         is_correct: g.correct,
       }))
       await supabase.from('quiz_answers').insert(rows)
+      const max = graded.length
+      const pct = max ? Math.round((score / max) * 100) : 0
+      const passMark = quiz?.pass_mark ?? 50
+      void logActivity(supabase, {
+        userId: user.id,
+        eventType: 'quiz_submitted',
+        quizId: id,
+        attemptId,
+        catalogueCourseId: quiz?.catalogue_course_id,
+        metadata: {
+          score,
+          max_score: max,
+          percentage: pct,
+          passed: pct >= passMark,
+          mode: quiz?.mode ?? 'practice',
+        },
+      })
     }
   }
 
@@ -303,6 +321,21 @@ export function QuizDetailPage() {
             <CardHeader>
               <CardTitle>
                 Score: {results.filter((r) => r.correct).length} / {results.length}
+                {results.length > 0 ? (
+                  <span className="ml-2 text-base font-normal text-ink-muted">
+                    (
+                    {Math.round(
+                      (results.filter((r) => r.correct).length / results.length) * 100,
+                    )}
+                    % —{' '}
+                    {Math.round(
+                      (results.filter((r) => r.correct).length / results.length) * 100,
+                    ) >= (quiz.pass_mark ?? 50)
+                      ? 'Pass'
+                      : 'Fail'}
+                    )
+                  </span>
+                ) : null}
               </CardTitle>
             </CardHeader>
           </Card>
@@ -318,7 +351,9 @@ export function QuizDetailPage() {
                     Your answer: <span className="text-danger">{r.answer || '—'}</span>
                   </p>
                   <p>Correct: {r.question.correct_answer}</p>
-                  {r.question.explanation ? <p className="text-ink-muted">{r.question.explanation}</p> : null}
+                  {r.question.explanation ? (
+                    <p className="text-ink-muted">{r.question.explanation}</p>
+                  ) : null}
                 </CardContent>
               </Card>
             ))}
@@ -329,7 +364,9 @@ export function QuizDetailPage() {
                 <CardContent className="pt-6 text-sm">
                   <p className="font-medium">{r.question.prompt}</p>
                   <p className="text-success">Correct</p>
-                  {r.question.explanation ? <p className="text-ink-muted">{r.question.explanation}</p> : null}
+                  {quiz.mode === 'assessment' && r.question.explanation ? (
+                    <p className="text-ink-muted">{r.question.explanation}</p>
+                  ) : null}
                 </CardContent>
               </Card>
             ))}

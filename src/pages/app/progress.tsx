@@ -18,7 +18,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/contexts/auth-context'
 import { trySupabase } from '@/lib/supabase/client'
-import type { QuizAttempt, StudySession, StudyTask, Subject, Topic } from '@/types/database'
+import { Link } from 'react-router-dom'
+import { Button } from '@/components/ui/button'
+import type {
+  Quiz,
+  QuizAnswer,
+  QuizAttempt,
+  StudentRecommendation,
+  StudySession,
+  StudyTask,
+  Subject,
+  Topic,
+} from '@/types/database'
 
 export function ProgressPage() {
   const { user } = useAuth()
@@ -31,18 +42,25 @@ export function ProgressPage() {
   const [topics, setTopics] = useState<Topic[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [reviewCount, setReviewCount] = useState(0)
+  const [quizzes, setQuizzes] = useState<Quiz[]>([])
+  const [allAttempts, setAllAttempts] = useState<QuizAttempt[]>([])
+  const [wrongTopics, setWrongTopics] = useState<string[]>([])
+  const [recommendations, setRecommendations] = useState<StudentRecommendation[]>([])
 
   const load = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
     const since = subDays(new Date(), range).toISOString()
-    const [sess, task, att, top, sub, rev] = await Promise.all([
+    const [sess, task, att, top, sub, rev, qz, allAtt, rec] = await Promise.all([
       supabase.from('study_sessions').select('*').eq('user_id', user.id).gte('started_at', since),
       supabase.from('study_tasks').select('*').eq('user_id', user.id).eq('status', 'completed').gte('completed_at', since),
       supabase.from('quiz_attempts').select('*').eq('user_id', user.id).gte('created_at', since),
       supabase.from('topics').select('*').eq('user_id', user.id),
       supabase.from('subjects').select('*').eq('user_id', user.id),
       supabase.from('flashcard_reviews').select('id', { count: 'exact', head: true }).eq('user_id', user.id).gte('reviewed_at', since),
+      supabase.from('quizzes').select('*').eq('user_id', user.id),
+      supabase.from('quiz_attempts').select('*').eq('user_id', user.id).not('submitted_at', 'is', null),
+      supabase.from('student_recommendations').select('*').eq('user_id', user.id).eq('dismissed', false).order('created_at', { ascending: false }),
     ])
     setSessions((sess.data as StudySession[]) ?? [])
     setTasks((task.data as StudyTask[]) ?? [])
@@ -50,6 +68,51 @@ export function ProgressPage() {
     setTopics((top.data as Topic[]) ?? [])
     setSubjects((sub.data as Subject[]) ?? [])
     setReviewCount(rev.count ?? 0)
+    setQuizzes((qz.data as Quiz[]) ?? [])
+    setAllAttempts((allAtt.data as QuizAttempt[]) ?? [])
+    let recs = (rec.data as StudentRecommendation[]) ?? []
+
+    const recentFails = (allAtt.data as QuizAttempt[] ?? []).filter((a) => {
+      const q = (qz.data as Quiz[] | null)?.find((z) => z.id === a.quiz_id)
+      const pct = a.max_score ? (a.score / a.max_score) * 100 : 0
+      return pct < (q?.pass_mark ?? 50)
+    })
+    if (recs.length === 0 && recentFails.length > 0) {
+      await supabase.from('student_recommendations').insert({
+        user_id: user.id,
+        title: 'Review after quiz misses',
+        body: 'You had recent quiz attempts below the pass mark. Try practice mode or course materials.',
+        action_href: '/app/quizzes/practice',
+        reason: 'auto_fail_streak',
+      })
+      const { data: again } = await supabase
+        .from('student_recommendations')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('dismissed', false)
+      recs = (again as StudentRecommendation[]) ?? recs
+    }
+
+    const failAttemptIds = recentFails.slice(0, 5).map((a) => a.id)
+    if (failAttemptIds.length > 0) {
+      const { data: ans } = await supabase
+        .from('quiz_answers')
+        .select('*, quiz_questions(prompt)')
+        .eq('user_id', user.id)
+        .eq('is_correct', false)
+        .in('attempt_id', failAttemptIds)
+      const labels = (ans ?? [])
+        .map((row) => {
+          const q = row as QuizAnswer & { quiz_questions?: { prompt: string } | null }
+          return q.quiz_questions?.prompt?.slice(0, 80) ?? null
+        })
+        .filter(Boolean) as string[]
+      setWrongTopics([...new Set(labels)].slice(0, 8))
+    } else {
+      setWrongTopics([])
+    }
+
+    setRecommendations(recs)
     setLoading(false)
   }, [supabase, user, range])
 
@@ -96,6 +159,21 @@ export function ProgressPage() {
 
   const revisionTopics = topics.filter((t) => t.needs_revision)
 
+  const quizSummary = useMemo(() => {
+    const rows = allAttempts.map((a) => {
+      const q = quizzes.find((z) => z.id === a.quiz_id)
+      const pct = a.max_score ? (a.score / a.max_score) * 100 : 0
+      return { pct, pass: pct >= (q?.pass_mark ?? 50) }
+    })
+    const total = rows.length
+    const avg = total ? Math.round(rows.reduce((s, r) => s + r.pct, 0) / total) : 0
+    const highest = total ? Math.round(Math.max(...rows.map((r) => r.pct))) : 0
+    const passed = rows.filter((r) => r.pass).length
+    const failed = rows.filter((r) => !r.pass).length
+    const passRate = total ? Math.round((passed / total) * 100) : 0
+    return { total, avg, highest, passed, failed, passRate }
+  }, [allAttempts, quizzes])
+
   if (!supabase) return <SupabaseSetupBanner />
   if (loading) return <Skeleton className="h-96 rounded-2xl" />
 
@@ -133,6 +211,68 @@ export function ProgressPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-lg">Quiz performance (all time)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {quizSummary.total === 0 ? (
+            <EmptyState
+              title="No quiz attempts yet"
+              action={
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/app/quizzes/practice">Start practice</Link>
+                </Button>
+              }
+            />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div>
+                <p className="text-2xl font-bold">{quizSummary.total}</p>
+                <p className="text-sm text-ink-muted">Attempts</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{quizSummary.avg}%</p>
+                <p className="text-sm text-ink-muted">Average</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{quizSummary.highest}%</p>
+                <p className="text-sm text-ink-muted">Highest</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{quizSummary.passed} / {quizSummary.failed}</p>
+                <p className="text-sm text-ink-muted">Pass / fail</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{quizSummary.passRate}%</p>
+                <p className="text-sm text-ink-muted">Pass rate</p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {recommendations.length > 0 ? (
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="text-lg">Recommendations</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {recommendations.map((r) => (
+              <div key={r.id} className="rounded-xl border border-border px-3 py-2 text-sm">
+                <p className="font-medium">{r.title}</p>
+                <p className="text-ink-muted">{r.body}</p>
+                {r.action_href ? (
+                  <Link to={r.action_href} className="text-primary-600 hover:underline">
+                    Take action
+                  </Link>
+                ) : null}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="rounded-2xl">
@@ -196,7 +336,7 @@ export function ProgressPage() {
         </CardContent>
       </Card>
 
-      {revisionTopics.length > 0 ? (
+      {revisionTopics.length > 0 || wrongTopics.length > 0 ? (
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle className="text-lg">Topics needing revision</CardTitle>
@@ -205,6 +345,9 @@ export function ProgressPage() {
             <ul className="list-disc pl-5 text-sm">
               {revisionTopics.map((t) => (
                 <li key={t.id}>{t.name}</li>
+              ))}
+              {wrongTopics.map((t) => (
+                <li key={t}>Quiz: {t}</li>
               ))}
             </ul>
           </CardContent>

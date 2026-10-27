@@ -1,5 +1,6 @@
 import {
   Bell,
+  Activity,
   BookOpen,
   Bot,
   CalendarDays,
@@ -8,15 +9,17 @@ import {
   Home,
   Layers,
   LayoutDashboard,
+  Library,
   LogOut,
   Settings,
   Timer,
   TrendingUp,
 } from 'lucide-react'
-import { useMemo, type ComponentType } from 'react'
+import { useEffect, useMemo, type ComponentType, type MouseEvent } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Logo } from '@/components/brand/logo'
 import { Button } from '@/components/ui/button'
+import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
 import { cn } from '@/lib/utils'
 
@@ -30,18 +33,20 @@ type NavItem = {
 const desktopNav: NavItem[] = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/app/subjects', label: 'My Subjects', icon: BookOpen },
+  { to: '/app/courses', label: 'Courses', icon: Library },
   { to: '/app/planner', label: 'Study Planner', icon: CalendarDays },
   { to: '/app/notes', label: 'Notes', icon: FileText },
   { to: '/app/quizzes', label: 'Quizzes', icon: GraduationCap },
   { to: '/app/flashcards', label: 'Flashcards', icon: Layers },
   { to: '/app/ai', label: 'AI Tutor', icon: Bot },
   { to: '/app/progress', label: 'Progress', icon: TrendingUp },
+  { to: '/app/activity', label: 'Activity', icon: Activity },
   { to: '/app/settings', label: 'Settings', icon: Settings },
 ]
 
 const mobileNav: NavItem[] = [
   { to: '/app', label: 'Home', icon: Home, end: true },
-  { to: '/app/subjects', label: 'Study', icon: BookOpen },
+  { to: '/app/courses', label: 'Courses', icon: Library },
   { to: '/app/planner', label: 'Planner', icon: CalendarDays },
   { to: '/app/ai', label: 'AI', icon: Bot },
   { to: '/app/settings', label: 'Profile', icon: Settings },
@@ -50,6 +55,10 @@ const mobileNav: NavItem[] = [
 const pageTitles: Record<string, string> = {
   '/app': 'Dashboard',
   '/app/subjects': 'My Subjects',
+  '/app/courses': 'Course Library',
+  '/app/academic-profile': 'Academic Profile',
+  '/app/activity': 'Activity',
+  '/app/quizzes/practice': 'Practice Quiz',
   '/app/planner': 'Study Planner',
   '/app/notes': 'Notes',
   '/app/quizzes': 'Quizzes',
@@ -70,6 +79,8 @@ function resolveTitle(pathname: string): string {
   if (pathname === '/app/notes/new') return 'New Note'
   if (pathname.match(/^\/app\/subjects\/[^/]+$/)) return 'Subject'
   if (pathname.match(/^\/app\/quizzes\/[^/]+$/)) return 'Quiz'
+  if (pathname.match(/^\/app\/courses\/[^/]+$/)) return 'Course'
+  if (pathname.startsWith('/app/courses/materials/')) return 'Reader'
   return pageTitles[pathname] ?? 'StudySphere'
 }
 
@@ -112,25 +123,58 @@ export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
+  const { active, isLockedPath } = useActiveQuiz()
   const title = useMemo(() => resolveTitle(location.pathname), [location.pathname])
+  const quizLocked = Boolean(active) && isLockedPath(location.pathname)
 
   const handleSignOut = async () => {
+    if (active) {
+      window.alert('Finish or abandon your locked quiz before signing out (leaving fails the attempt).')
+      return
+    }
     await signOut()
     navigate('/login', { replace: true })
   }
+
+  const guardNav = (e: MouseEvent, to: string) => {
+    if (!active) return
+    const allowed = `/app/quizzes/${active.quizId}/take`
+    if (to !== allowed && !to.startsWith(allowed)) {
+      e.preventDefault()
+      window.alert(
+        'You are in a locked quiz. Leaving this page will FAIL the attempt — use Submit on the quiz screen, or confirm leave from the quiz warning.',
+      )
+      navigate(allowed, { replace: true })
+    }
+  }
+
+  useEffect(() => {
+    if (active && isLockedPath(location.pathname)) {
+      navigate(`/app/quizzes/${active.quizId}/take`, { replace: true })
+    }
+  }, [active, isLockedPath, location.pathname, navigate])
 
   return (
     <div className="flex min-h-dvh bg-surface text-ink">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface-elevated lg:flex">
         <div className="border-b border-border p-4">
-          <Logo to="/app" />
+          <Logo to={active ? `/app/quizzes/${active.quizId}/take` : '/app'} />
         </div>
+        {quizLocked || active ? (
+          <div className="m-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+            Quiz locked — finish your assessment before using other sections.
+          </div>
+        ) : null}
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3" aria-label="App">
           {desktopNav.map(({ to, label, icon, end }) => (
-            <NavLinkItem key={to} to={to} label={label} icon={icon} end={end} />
+            <span key={to} onClickCapture={(e) => guardNav(e, to)}>
+              <NavLinkItem to={to} label={label} icon={icon} end={end} />
+            </span>
           ))}
           <div className="my-2 border-t border-border" />
-          <NavLinkItem to="/app/timer" label="Focus Timer" icon={Timer} />
+          <span onClickCapture={(e) => guardNav(e, '/app/timer')}>
+            <NavLinkItem to="/app/timer" label="Focus Timer" icon={Timer} />
+          </span>
         </nav>
         <div className="border-t border-border p-4">
           <Link
@@ -181,16 +225,17 @@ export function AppLayout() {
         >
           {mobileNav.map(({ to, label, icon, end }) => {
             const Icon = icon
-            const active = end
+            const isActive = end
               ? location.pathname === to
               : location.pathname === to || location.pathname.startsWith(`${to}/`)
             return (
               <Link
                 key={to}
                 to={to}
+                onClick={(e) => guardNav(e, to)}
                 className={cn(
                   'flex flex-1 flex-col items-center gap-0.5 rounded-lg py-1 text-[10px] font-medium',
-                  active ? 'text-primary-600' : 'text-ink-muted',
+                  isActive ? 'text-primary-600' : 'text-ink-muted',
                 )}
               >
                 <Icon className="h-5 w-5" aria-hidden />
