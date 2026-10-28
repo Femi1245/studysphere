@@ -33,13 +33,13 @@ export async function fetchInstitutions(
   filters: {
     countryId: string
     institutionType?: InstitutionType
-    /** When search has 2+ characters, type filter is ignored so universities, polys, etc. all appear. */
+    /** When search has 1+ characters, type filter is ignored so universities, polys, etc. all appear. */
     search?: string
     limit?: number
   },
 ): Promise<Institution[]> {
   const search = filters.search?.trim() ?? ''
-  const crossTypeSearch = search.length >= 2
+  const crossTypeSearch = search.length >= 1
 
   let q = supabase
     .from('institutions')
@@ -57,35 +57,76 @@ export async function fetchInstitutions(
   }
 
   const { data, error } = await q.limit(
-    filters.limit ?? (crossTypeSearch ? 80 : 400),
+    filters.limit ?? (crossTypeSearch ? 100 : 400),
   )
   if (error) throw error
   return (data as Institution[]) ?? []
 }
 
+/**
+ * Institution-specific departments, falling back to shared (institution_id IS NULL).
+ */
 export async function fetchDepartments(
   supabase: SupabaseClient,
   institutionId: string,
 ): Promise<Department[]> {
-  const { data, error } = await supabase
+  const { data: specific, error } = await supabase
     .from('departments')
     .select('*')
     .eq('institution_id', institutionId)
     .order('name')
   if (error) throw error
-  return (data as Department[]) ?? []
+  if (specific?.length) return specific as Department[]
+
+  const { data: shared, error: sharedErr } = await supabase
+    .from('departments')
+    .select('*')
+    .is('institution_id', null)
+    .order('name')
+    .limit(100)
+  if (sharedErr) throw sharedErr
+  return (shared as Department[]) ?? []
 }
 
+/**
+ * Institution programmes for the education level, plus shared national programmes.
+ */
 export async function fetchProgrammes(
   supabase: SupabaseClient,
   filters: { institutionId?: string; educationLevelId?: string },
 ): Promise<Programme[]> {
-  let q = supabase.from('programmes').select('*').eq('is_active', true).order('name')
-  if (filters.institutionId) q = q.eq('institution_id', filters.institutionId)
-  if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
-  const { data, error } = await q.limit(200)
-  if (error) throw error
-  return (data as Programme[]) ?? []
+  const byId = new Map<string, Programme>()
+
+  if (filters.institutionId) {
+    let q = supabase
+      .from('programmes')
+      .select('*')
+      .eq('is_active', true)
+      .eq('institution_id', filters.institutionId)
+      .order('name')
+    if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
+    const { data, error } = await q.limit(200)
+    if (error) throw error
+    for (const row of (data as Programme[]) ?? []) byId.set(row.id, row)
+  }
+
+  // Always include shared programmes for the education level so campuses without seed still work
+  {
+    let q = supabase
+      .from('programmes')
+      .select('*')
+      .eq('is_active', true)
+      .is('institution_id', null)
+      .order('name')
+    if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
+    const { data, error } = await q.limit(200)
+    if (error) throw error
+    for (const row of (data as Programme[]) ?? []) {
+      if (!byId.has(row.id)) byId.set(row.id, row)
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export async function fetchClassLevels(
@@ -110,27 +151,74 @@ export type CatalogueCourseFilters = {
   search?: string
 }
 
+/**
+ * Published courses for the education level.
+ * Includes institution-specific rows plus shared (institution_id IS NULL) national courses.
+ */
 export async function fetchCatalogueCourses(
   supabase: SupabaseClient,
   filters: CatalogueCourseFilters,
 ): Promise<CatalogueCourse[]> {
-  let q = supabase
-    .from('catalogue_courses')
-    .select('*')
-    .eq('is_published', true)
-    .order('title')
-  if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
-  if (filters.institutionId) q = q.eq('institution_id', filters.institutionId)
-  if (filters.programmeId) q = q.eq('programme_id', filters.programmeId)
-  if (filters.classLevelId) q = q.eq('class_level_id', filters.classLevelId)
-  if (filters.semesterTerm) q = q.eq('semester_term', filters.semesterTerm)
-  if (filters.search?.trim()) {
-    const term = filters.search.trim()
-    q = q.or(`title.ilike.%${term}%,code.ilike.%${term}%`)
+  const byId = new Map<string, CatalogueCourse>()
+
+  if (filters.institutionId) {
+    let q = supabase
+      .from('catalogue_courses')
+      .select('*')
+      .eq('is_published', true)
+      .eq('institution_id', filters.institutionId)
+      .order('title')
+    if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
+    if (filters.programmeId) q = q.eq('programme_id', filters.programmeId)
+    if (filters.classLevelId) q = q.eq('class_level_id', filters.classLevelId)
+    if (filters.semesterTerm) q = q.eq('semester_term', filters.semesterTerm)
+    if (filters.search?.trim()) {
+      const term = filters.search.trim()
+      q = q.or(`title.ilike.%${term}%,code.ilike.%${term}%`)
+    }
+    const { data, error } = await q.limit(200)
+    if (error) throw error
+    for (const row of (data as CatalogueCourse[]) ?? []) byId.set(row.id, row)
   }
-  const { data, error } = await q.limit(200)
-  if (error) throw error
-  return (data as CatalogueCourse[]) ?? []
+
+  {
+    let q = supabase
+      .from('catalogue_courses')
+      .select('*')
+      .eq('is_published', true)
+      .is('institution_id', null)
+      .order('title')
+    if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
+    if (filters.programmeId) q = q.eq('programme_id', filters.programmeId)
+    if (filters.classLevelId) q = q.eq('class_level_id', filters.classLevelId)
+    if (filters.semesterTerm) q = q.eq('semester_term', filters.semesterTerm)
+    if (filters.search?.trim()) {
+      const term = filters.search.trim()
+      q = q.or(`title.ilike.%${term}%,code.ilike.%${term}%`)
+    }
+    const { data, error } = await q.limit(200)
+    if (error) throw error
+    for (const row of (data as CatalogueCourse[]) ?? []) {
+      if (!byId.has(row.id)) byId.set(row.id, row)
+    }
+  }
+
+  // If programme filter emptied the list, show shared level courses without programme filter
+  if (byId.size === 0 && filters.programmeId && filters.educationLevelId) {
+    let q = supabase
+      .from('catalogue_courses')
+      .select('*')
+      .eq('is_published', true)
+      .eq('education_level_id', filters.educationLevelId)
+      .is('institution_id', null)
+      .order('title')
+    if (filters.classLevelId) q = q.eq('class_level_id', filters.classLevelId)
+    const { data, error } = await q.limit(200)
+    if (error) throw error
+    for (const row of (data as CatalogueCourse[]) ?? []) byId.set(row.id, row)
+  }
+
+  return [...byId.values()].sort((a, b) => a.code.localeCompare(b.code))
 }
 
 export async function fetchAcademicSessions(

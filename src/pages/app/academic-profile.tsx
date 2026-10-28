@@ -107,6 +107,11 @@ export function AcademicProfilePage() {
       setSessionId(profile.academic_session_id ?? '')
       setSemesterTerm(profile.semester_term ?? '')
       setCourseOfStudy(profile.course_of_study ?? '')
+    } else {
+      const ng = c.find((x) => x.code === 'NG')
+      if (ng) setCountryId(ng.id)
+      const uni = lv.find((x) => x.code === 'university')
+      if (uni) setEducationLevelId(uni.id)
     }
     setEnrolments((enr.data as StudentCourseEnrolment[]) ?? [])
     setSelectedCourses((enr.data as StudentCourseEnrolment[])?.map((e) => e.catalogue_course_id) ?? [])
@@ -145,13 +150,22 @@ export function AcademicProfilePage() {
   }, [supabase, educationLevelId])
 
   useEffect(() => {
-    if (!supabase || !institutionId || isSecondary) return
+    if (!supabase || isSecondary) return
+    if (!institutionId && !educationLevelId) return
     void Promise.all([
-      fetchProgrammes(supabase, { institutionId, educationLevelId }),
-      fetchDepartments(supabase, institutionId),
+      fetchProgrammes(supabase, {
+        institutionId: institutionId || undefined,
+        educationLevelId: educationLevelId || undefined,
+      }),
+      institutionId
+        ? fetchDepartments(supabase, institutionId)
+        : Promise.resolve([] as Awaited<ReturnType<typeof fetchDepartments>>),
     ]).then(([p, d]) => {
       setProgrammes(p.map((x) => ({ id: x.id, name: x.name })))
       setDepartments(d.map((x) => ({ id: x.id, name: x.name })))
+      // Clear stale selections that are no longer in the lists
+      setProgrammeId((prev) => (prev && p.some((x) => x.id === prev) ? prev : ''))
+      setDepartmentId((prev) => (prev && d.some((x) => x.id === prev) ? prev : ''))
     })
   }, [supabase, institutionId, educationLevelId, isSecondary])
 
@@ -271,65 +285,142 @@ export function AcademicProfilePage() {
             <Input value={customInstitution} onChange={(ev) => setCustomInstitution(ev.target.value)} placeholder="Institution name" />
           ) : (
             <>
-              <Input
-                placeholder="Search any university, polytechnic, college…"
-                value={institutionSearch}
-                onChange={(ev) => setInstitutionSearch(ev.target.value)}
-              />
-              <p className="text-xs text-ink-muted">
-                Search across all institution types. Without search, results match your education level.
-              </p>
-              <Select value={institutionId} onValueChange={setInstitutionId}>
-                <SelectTrigger><SelectValue placeholder="Institution" /></SelectTrigger>
-                <SelectContent>
-                  {institutions.map((i) => (
-                    <SelectItem key={i.id} value={i.id}>
-                      {i.name}
-                      {i.state_region ? ` · ${i.state_region}` : ''} ·{' '}
-                      {i.institution_type.replaceAll('_', ' ')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-2">
+                <Label>Search institution</Label>
+                <Input
+                  placeholder="Type name e.g. Osun, Lagos, Yaba…"
+                  value={institutionSearch}
+                  onChange={(ev) => setInstitutionSearch(ev.target.value)}
+                />
+                <p className="text-xs text-ink-muted">
+                  {institutions.length} match{institutions.length === 1 ? '' : 'es'}
+                  {institutionSearch.trim()
+                    ? ' (all types)'
+                    : ' for your education level — type to search every type'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>Institution</Label>
+                <Select
+                  value={institutionId}
+                  onValueChange={(id) => {
+                    setInstitutionId(id)
+                    setProgrammeId('')
+                    setDepartmentId('')
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select institution" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {institutions.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-ink-muted">No institutions found</div>
+                    ) : (
+                      institutions.map((i) => (
+                        <SelectItem key={i.id} value={i.id}>
+                          {i.name}
+                          {i.state_region ? ` · ${i.state_region}` : ''} ·{' '}
+                          {i.institution_type.replaceAll('_', ' ')}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </>
           )}
           {!isSecondary ? (
             <>
-              <Select value={programmeId} onValueChange={setProgrammeId}>
-                <SelectTrigger><SelectValue placeholder="Programme" /></SelectTrigger>
-                <SelectContent>
-                  {programmes.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={departmentId} onValueChange={setDepartmentId}>
-                <SelectTrigger><SelectValue placeholder="Department" /></SelectTrigger>
-                <SelectContent>
-                  {departments.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input value={courseOfStudy} onChange={(ev) => setCourseOfStudy(ev.target.value)} placeholder="Course of study" />
+              <div className="space-y-2">
+                <Label>Programme</Label>
+                <Select value={programmeId} onValueChange={setProgrammeId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select programme" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {programmes.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-ink-muted">
+                        {institutionId
+                          ? 'No programmes yet — run shared catalogue SQL seed'
+                          : 'Select an institution first'}
+                      </div>
+                    ) : (
+                      programmes.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Department</Label>
+                <Select value={departmentId} onValueChange={setDepartmentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select department" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {departments.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-ink-muted">
+                        {institutionId
+                          ? 'No departments yet — run shared catalogue SQL seed'
+                          : 'Select an institution first'}
+                      </div>
+                    ) : (
+                      departments.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Course of study</Label>
+                <Input
+                  value={courseOfStudy}
+                  onChange={(ev) => setCourseOfStudy(ev.target.value)}
+                  placeholder="e.g. Computer Science"
+                />
+              </div>
             </>
           ) : null}
-          <Select value={classLevelId} onValueChange={setClassLevelId}>
-            <SelectTrigger><SelectValue placeholder="Class level" /></SelectTrigger>
-            <SelectContent>
-              {classLevels.map((c) => (
-                <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={sessionId} onValueChange={setSessionId}>
-            <SelectTrigger><SelectValue placeholder="Session" /></SelectTrigger>
-            <SelectContent>
-              {sessions.map((s) => (
-                <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="space-y-2">
+            <Label>Class level</Label>
+            <Select value={classLevelId} onValueChange={setClassLevelId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select class level" />
+              </SelectTrigger>
+              <SelectContent>
+                {classLevels.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Session</Label>
+            <Select value={sessionId} onValueChange={setSessionId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select session year" />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                {sessions.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-ink-muted">No sessions loaded</div>
+                ) : (
+                  sessions.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.label}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
           <Select value={semesterTerm || 'none'} onValueChange={(v) => setSemesterTerm(v === 'none' ? '' : (v as SemesterTerm))}>
             <SelectTrigger><SelectValue placeholder="Term" /></SelectTrigger>
             <SelectContent>
@@ -346,12 +437,23 @@ export function AcademicProfilePage() {
           <CardTitle className="text-base">Course enrolments</CardTitle>
         </CardHeader>
         <CardContent className="max-h-64 space-y-2 overflow-y-auto">
-          {catalogue.map((c) => (
-            <label key={c.id} className="flex gap-2 text-sm">
-              <input type="checkbox" checked={selectedCourses.includes(c.id)} onChange={() => toggleCourse(c.id)} />
-              {c.code} — {c.title}
-            </label>
-          ))}
+          {catalogue.length === 0 ? (
+            <p className="text-sm text-ink-muted">
+              No catalogue courses for this selection yet. Choose education level (and optionally
+              programme / class level), or run the shared catalogue SQL seed in Supabase.
+            </p>
+          ) : (
+            catalogue.map((c) => (
+              <label key={c.id} className="flex gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selectedCourses.includes(c.id)}
+                  onChange={() => toggleCourse(c.id)}
+                />
+                {c.code} — {c.title}
+              </label>
+            ))
+          )}
         </CardContent>
       </Card>
       <Button type="submit" disabled={saving} className="w-full">
