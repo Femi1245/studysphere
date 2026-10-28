@@ -12,7 +12,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
-import { AuthSetupTip } from '@/components/auth/auth-setup-tip'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/auth-context'
 
@@ -80,7 +79,6 @@ export function SignupPage() {
           <CardDescription>Create your free account in seconds.</CardDescription>
         </CardHeader>
         <CardContent>
-          {configured ? <AuthSetupTip /> : null}
           {!configured ? (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
               Sign-up is not available until Supabase is configured. Add{' '}

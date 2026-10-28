@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AuthSetupTip } from '@/components/auth/auth-setup-tip'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 
@@ -49,7 +48,6 @@ export function LoginPage() {
           <CardDescription>Sign in to continue to your study workspace.</CardDescription>
         </CardHeader>
         <CardContent>
-          {configured ? <AuthSetupTip /> : null}
           {!configured ? (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
               Authentication is not configured. Add{' '}

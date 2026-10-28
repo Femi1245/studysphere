@@ -8,9 +8,10 @@ export function mapAuthError(message: string): string {
     lower.includes('over_email_send_rate_limit')
   ) {
     return (
-      'Email rate limit exceeded. Supabase’s free email provider allows only a few messages per hour. ' +
-      'Fix: in the Supabase dashboard open Authentication → Providers → Email and turn Confirm email OFF, ' +
-      'then wait a few minutes and try signing up again (no confirmation email will be sent).'
+      'Supabase blocked sign-up because it is still trying to send a confirmation email, ' +
+      'and the free mailer is capped at ~2 emails/hour. ' +
+      'In the Supabase dashboard: Auth → Providers → Email → turn Confirm email OFF → Save, ' +
+      'then sign up with a new email. The tip on this page is only a reminder — the setting must be changed in Supabase.'
     )
   }
 
