@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { createUserClient, runGradeQuiz } from './api/lib/run-grade-quiz.ts'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -245,6 +246,73 @@ function aiTutorDevPlugin(env: Record<string, string>): Plugin {
               res.end(
                 JSON.stringify({
                   error: e instanceof Error ? e.message : 'Generate failed',
+                }),
+              )
+            }
+          })()
+        })
+      })
+
+      server.middlewares.use('/api/grade-quiz', (req, res, next) => {
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204
+          res.setHeader('Access-Control-Allow-Origin', '*')
+          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+          res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type')
+          res.end()
+          return
+        }
+        if (req.method !== 'POST') {
+          next()
+          return
+        }
+        const chunks: Buffer[] = []
+        req.on('data', (c: Buffer) => chunks.push(c))
+        req.on('end', () => {
+          void (async () => {
+            try {
+              const url = env.VITE_SUPABASE_URL || env.SUPABASE_URL
+              const anon = env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY
+              if (!url || !anon) {
+                res.statusCode = 503
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'Supabase not configured on server' }))
+                return
+              }
+              const auth = req.headers.authorization
+              if (!auth?.startsWith('Bearer ')) {
+                res.statusCode = 401
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'Sign in required' }))
+                return
+              }
+              const supabase = createUserClient(url, anon, auth)
+              const {
+                data: { user },
+                error: userErr,
+              } = await supabase.auth.getUser()
+              if (userErr || !user) {
+                res.statusCode = 401
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'Unauthorized' }))
+                return
+              }
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
+                quiz_id?: string
+                answers?: Array<{ question_id: string; answer: string }>
+                abandoned?: boolean
+                started_at?: string
+              }
+              const result = await runGradeQuiz(supabase, user.id, body)
+              res.statusCode = result.status
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify(result.json))
+            } catch (e) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(
+                JSON.stringify({
+                  error: e instanceof Error ? e.message : 'Grading failed',
                 }),
               )
             }

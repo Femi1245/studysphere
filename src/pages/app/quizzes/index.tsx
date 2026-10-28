@@ -82,7 +82,16 @@ export function QuizzesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button asChild variant="outline">
+          <Link to="/app/exams">Examination centre</Link>
+        </Button>
+        <Button asChild variant="outline">
+          <Link to="/app/learning">Learning insights</Link>
+        </Button>
+        <Button asChild variant="outline">
+          <Link to="/app/quizzes/practice">Course assessment</Link>
+        </Button>
         <Button onClick={() => setOpen(true)}>
           <Plus className="h-4 w-4" />
           Create quiz

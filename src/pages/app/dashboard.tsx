@@ -522,6 +522,9 @@ export function DashboardPage() {
               <div key={r.id} className="rounded-xl border border-accent-200 bg-accent-50 px-3 py-2 text-sm dark:bg-accent-900/20">
                 <p className="font-medium">{r.title}</p>
                 <p className="text-ink-muted">{r.body}</p>
+                {r.reason ? (
+                  <p className="mt-1 text-xs text-primary-700 dark:text-primary-300">Why: {r.reason}</p>
+                ) : null}
                 <div className="mt-2 flex gap-2">
                   {r.action_href ? (
                     <Button asChild size="sm" variant="outline">
@@ -534,6 +537,9 @@ export function DashboardPage() {
                 </div>
               </div>
             ))}
+            <Button asChild size="sm" variant="ghost" className="w-full">
+              <Link to="/app/learning">All learning insights</Link>
+            </Button>
             {overdueTasks.length === 0 && dueFlashcards === 0 && recommendations.length === 0 ? (
               <p className="text-sm text-ink-muted">You&apos;re caught up — great work!</p>
             ) : null}

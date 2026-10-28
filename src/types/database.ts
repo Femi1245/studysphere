@@ -196,6 +196,9 @@ export interface QuizQuestion {
   correct_answer: string
   explanation: string | null
   order_index: number
+  topic_label: string | null
+  bank_question_id: string | null
+  source_fingerprint: string | null
   created_at: string
 }
 
@@ -501,8 +504,26 @@ export interface StudentRecommendation {
   body: string
   action_href: string | null
   reason: string | null
+  kind: string | null
+  topic_key: string | null
+  evidence_json: Record<string, unknown>
   dismissed: boolean
   created_at: string
+  updated_at?: string
+}
+
+export interface TopicPerformance {
+  id: string
+  user_id: string
+  topic_key: string
+  catalogue_course_id: string | null
+  incorrect_count: number
+  correct_count: number
+  distinct_attempts: number
+  last_incorrect_at: string | null
+  last_correct_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface PlatformSetting {

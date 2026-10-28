@@ -54,6 +54,12 @@ type GenQuestion = {
   options: string[] | null
   correct_answer: string
   explanation: string | null
+  topic_label?: string | null
+  bank_question_id?: string | null
+}
+
+function fp(prompt: string): string {
+  return prompt.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 200)
 }
 
 export function QuizPracticePage() {
@@ -199,12 +205,22 @@ export function QuizPracticePage() {
           options: parseOptions(q.options),
           correct_answer: q.correct_answer,
           explanation: q.explanation,
+          topic_label: q.topic_label,
+          bank_question_id: q.id,
         }))
 
       if (picked.length < count) {
         const extra = await generateExtra(count - picked.length, courseLabel)
         picked = [...picked, ...extra].slice(0, count)
       }
+
+      const seenFp = new Set<string>()
+      picked = picked.filter((q) => {
+        const k = fp(q.prompt)
+        if (seenFp.has(k)) return false
+        seenFp.add(k)
+        return true
+      })
 
       if (picked.length < MIN_QUIZ_QUESTIONS) {
         toast({
@@ -253,6 +269,9 @@ export function QuizPracticePage() {
         correct_answer: q.correct_answer,
         explanation: q.explanation,
         order_index: i,
+        topic_label: q.topic_label ?? null,
+        bank_question_id: q.bank_question_id ?? null,
+        source_fingerprint: fp(q.prompt),
       }))
       const { error: qErr } = await supabase.from('quiz_questions').insert(rows)
       if (qErr) {
@@ -291,7 +310,10 @@ export function QuizPracticePage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link to="/app/exams">Examination centre</Link>
+        </Button>
         <Button asChild variant="outline" size="sm">
           <Link to="/app/quizzes">Quizzes</Link>
         </Button>

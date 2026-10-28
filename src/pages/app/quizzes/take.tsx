@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useBlocker, useNavigate, useParams } from 'react-router-dom'
+import { Link, useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -7,21 +7,35 @@ import { Spinner } from '@/components/ui/spinner'
 import { useToast } from '@/components/ui/toast'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
-import { logActivity } from '@/lib/activity'
+import { regenerateRecommendations } from '@/lib/learning-engine'
 import { formatSeconds } from '@/lib/utils'
 import { trySupabase } from '@/lib/supabase/client'
 import type { Quiz, QuizQuestion } from '@/types/database'
 
-function gradeAnswer(q: QuizQuestion, answer: string): boolean {
-  const expected = q.correct_answer.trim().toLowerCase()
-  const got = answer.trim().toLowerCase()
-  if (q.question_type === 'short_answer') return got === expected
-  return got === expected
+type GradeResult = {
+  attempt_id: string
+  score: number
+  max_score: number
+  percentage: number
+  pass_mark: number
+  passed: boolean
+  abandoned: boolean
+  review: Array<{
+    question_id: string
+    prompt: string
+    your_answer: string
+    correct_answer: string
+    is_correct: boolean
+    explanation: string | null
+    topic_label: string | null
+  }>
+  weak_topics: string[]
+  revision_href: string
 }
 
 export function QuizTakePage() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const { user, session } = useAuth()
   const { active, clearSession } = useActiveQuiz()
   const { toast } = useToast()
   const navigate = useNavigate()
@@ -34,13 +48,7 @@ export function QuizTakePage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(0)
-  const [result, setResult] = useState<{
-    score: number
-    max: number
-    percentage: number
-    passed: boolean
-    failedByAbandon?: boolean
-  } | null>(null)
+  const [result, setResult] = useState<GradeResult | null>(null)
 
   const submittingRef = useRef(false)
   const finishedRef = useRef(false)
@@ -67,105 +75,77 @@ export function QuizTakePage() {
     void load()
   }, [load])
 
-  useEffect(() => {
-    if (!endsAt || result) return
-    const tick = () => {
-      const left = Math.max(0, Math.floor((endsAt - Date.now()) / 1000))
-      setSecondsLeft(left)
-      if (left <= 0 && !finishedRef.current) {
-        void finalize(false, false)
-      }
-    }
-    tick()
-    const t = window.setInterval(tick, 1000)
-    return () => window.clearInterval(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endsAt, result])
-
   const finalize = useCallback(
-    async (abandoned: boolean, fromUser: boolean) => {
-      if (!supabase || !user || !id || !quiz || submittingRef.current || finishedRef.current) {
+    async (abandoned: boolean) => {
+      if (!user || !id || !session?.access_token || submittingRef.current || finishedRef.current) {
         return
       }
       submittingRef.current = true
       finishedRef.current = true
       setSubmitting(true)
 
-      const passMark = quiz.pass_mark ?? active?.passMark ?? 50
-      let score = 0
-      const answerRows = questions.map((q) => {
-        const ans = abandoned ? '' : answers[q.id] ?? ''
-        const correct = !abandoned && ans ? gradeAnswer(q, ans) : false
-        if (correct) score += 1
-        return {
-          question_id: q.id,
-          user_id: user.id,
-          answer: ans || '(unanswered)',
-          is_correct: correct,
-        }
-      })
-
-      const max = questions.length || 1
-      const percentage = abandoned ? 0 : Math.round((score / max) * 1000) / 10
-      const passed = !abandoned && percentage >= passMark
-
-      const { data: attempt, error } = await supabase
-        .from('quiz_attempts')
-        .insert({
-          quiz_id: id,
-          user_id: user.id,
-          score: abandoned ? 0 : score,
-          max_score: max,
-          started_at: active?.startedAt ?? new Date().toISOString(),
-          submitted_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single()
-
-      if (!error && attempt) {
-        await supabase.from('quiz_answers').insert(
-          answerRows.map((r) => ({ ...r, attempt_id: attempt.id })),
-        )
-        await logActivity(supabase, {
-          userId: user.id,
-          eventType: abandoned ? 'quiz_abandoned_fail' : 'quiz_submitted',
-          quizId: id,
-          attemptId: attempt.id,
-          catalogueCourseId: quiz.catalogue_course_id,
-          metadata: {
-            score: abandoned ? 0 : score,
-            max,
-            percentage,
-            passed,
-            abandoned,
-            fromUser,
+      try {
+        const res = await fetch('/api/grade-quiz', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
           },
+          body: JSON.stringify({
+            quiz_id: id,
+            abandoned,
+            started_at: active?.startedAt,
+            answers: Object.entries(answers).map(([question_id, answer]) => ({
+              question_id,
+              answer,
+            })),
+          }),
         })
-      }
-
-      clearSession()
-      setResult({
-        score: abandoned ? 0 : score,
-        max,
-        percentage,
-        passed,
-        failedByAbandon: abandoned,
-      })
-      setSubmitting(false)
-      submittingRef.current = false
-
-      if (abandoned) {
+        const data = (await res.json()) as GradeResult & { error?: string }
+        if (!res.ok) {
+          throw new Error(data.error || 'Grading failed')
+        }
+        clearSession()
+        setResult(data)
+        if (supabase) {
+          void regenerateRecommendations(supabase, user.id)
+        }
+        if (abandoned) {
+          toast({
+            title: 'Quiz failed',
+            description: 'Leaving the exam recorded this attempt as FAIL.',
+            kind: 'error',
+          })
+        }
+      } catch (e) {
+        finishedRef.current = false
         toast({
-          title: 'Quiz failed',
-          description: 'You left the exam. This attempt is recorded as FAIL.',
+          title: 'Submit failed',
+          description: e instanceof Error ? e.message : 'Unknown error',
           kind: 'error',
         })
+      } finally {
+        setSubmitting(false)
+        submittingRef.current = false
       }
     },
-    [supabase, user, id, quiz, questions, answers, active, clearSession, toast],
+    [user, id, session, answers, active, clearSession, supabase, toast],
   )
 
-  // Block in-app navigation while quiz is active
+  useEffect(() => {
+    if (!endsAt || result) return
+    const tick = () => {
+      const left = Math.max(0, Math.floor((endsAt - Date.now()) / 1000))
+      setSecondsLeft(left)
+      if (left <= 0 && !finishedRef.current) {
+        void finalize(false)
+      }
+    }
+    tick()
+    const t = window.setInterval(tick, 1000)
+    return () => window.clearInterval(t)
+  }, [endsAt, result, finalize])
+
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       Boolean(active) &&
@@ -176,17 +156,14 @@ export function QuizTakePage() {
 
   useEffect(() => {
     if (blocker.state !== 'blocked') return
-    const leave = window.confirm(
-      'Leaving this quiz will FAIL your attempt. Are you sure?',
-    )
+    const leave = window.confirm('Leaving this quiz will FAIL your attempt. Continue?')
     if (leave) {
-      void finalize(true, true).then(() => blocker.proceed?.())
+      void finalize(true).then(() => blocker.proceed?.())
     } else {
       blocker.reset?.()
     }
   }, [blocker, finalize])
 
-  // Tab close / refresh
   useEffect(() => {
     if (result || !active) return
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -194,9 +171,7 @@ export function QuizTakePage() {
       e.returnValue = ''
     }
     const onPageHide = () => {
-      if (!finishedRef.current) {
-        void finalize(true, false)
-      }
+      if (!finishedRef.current) void finalize(true)
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     window.addEventListener('pagehide', onPageHide)
@@ -206,16 +181,7 @@ export function QuizTakePage() {
     }
   }, [active, result, finalize])
 
-  // Wrong route while active → fail
-  useEffect(() => {
-    if (!active || !id || result) return
-    if (active.quizId !== id) {
-      void finalize(true, true)
-    }
-  }, [active, id, result, finalize])
-
   const current = questions[index]
-
   const progressLabel = useMemo(
     () => `${index + 1} / ${questions.length}`,
     [index, questions.length],
@@ -226,8 +192,8 @@ export function QuizTakePage() {
     return (
       <Card className="rounded-2xl p-6">
         <p>Quiz not found.</p>
-        <Button className="mt-4" onClick={() => navigate('/app/quizzes/practice')}>
-          Back
+        <Button className="mt-4" onClick={() => navigate('/app/exams')}>
+          Examination centre
         </Button>
       </Card>
     )
@@ -235,47 +201,64 @@ export function QuizTakePage() {
 
   if (result) {
     return (
-      <Card className="mx-auto max-w-lg rounded-2xl">
-        <CardHeader>
-          <CardTitle className="font-display text-2xl">
-            {result.failedByAbandon
-              ? 'FAIL — Left exam'
-              : result.passed
-                ? 'PASS'
-                : 'FAIL'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-ink-muted">
-            Score: {result.score}/{result.max} ({result.percentage}%)
-          </p>
-          {result.failedByAbandon ? (
-            <p className="text-sm text-danger">
-              Navigating away or closing the quiz records an automatic fail.
+      <div className="mx-auto max-w-2xl space-y-4">
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="font-display text-2xl">
+              {result.abandoned ? 'FAIL — Left exam' : result.passed ? 'PASS' : 'FAIL'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm">
+              Score: {result.score}/{result.max_score} ({result.percentage}%) · Pass mark{' '}
+              {result.pass_mark}%
             </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => navigate('/app/quizzes/practice')}>New quiz</Button>
-            <Button variant="outline" onClick={() => navigate('/app/activity')}>
-              Activity
-            </Button>
-            <Button variant="outline" onClick={() => navigate(`/app/quizzes/${id}`)}>
-              Review quiz
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            <p className="text-xs text-ink-muted">Graded on the server. This attempt is saved permanently.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link to={result.revision_href || '/app/learning'}>Revision recommendations</Link>
+              </Button>
+              <Button variant="outline" onClick={() => navigate('/app/exams')}>
+                New exam
+              </Button>
+              <Button variant="outline" onClick={() => navigate('/app/activity')}>
+                Activity
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="text-base">Answer review</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {result.review.map((r, i) => (
+              <div key={r.question_id} className="rounded-xl border border-border p-3 text-sm">
+                <p className="font-medium">
+                  {i + 1}. {r.prompt}
+                </p>
+                <p className="mt-1 text-ink-muted">Your answer: {r.your_answer}</p>
+                <p className={r.is_correct ? 'text-success' : 'text-danger'}>
+                  {r.is_correct ? 'Correct' : `Correct answer: ${r.correct_answer}`}
+                </p>
+                {r.explanation ? (
+                  <p className="mt-1 text-xs text-ink-muted">{r.explanation}</p>
+                ) : null}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
     )
   }
 
   if (!active || active.quizId !== id) {
     return (
       <Card className="rounded-2xl p-6">
-        <p className="text-sm text-ink-muted">
-          No active locked session. Start again from Practice quiz.
-        </p>
-        <Button className="mt-4" onClick={() => navigate('/app/quizzes/practice')}>
-          Start quiz
+        <p className="text-sm text-ink-muted">No active session. Start from the Examination centre.</p>
+        <Button className="mt-4" onClick={() => navigate('/app/exams')}>
+          Examination centre
         </Button>
       </Card>
     )
@@ -286,7 +269,7 @@ export function QuizTakePage() {
       <div className="sticky top-0 z-20 flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface-elevated px-4 py-3 shadow-sm">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">
-            Locked exam mode
+            Locked exam · answers hidden until submit
           </p>
           <p className="text-sm font-semibold">{quiz.title}</p>
         </div>
@@ -299,7 +282,8 @@ export function QuizTakePage() {
       </div>
 
       <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
-        Do not switch sections or close this tab. Leaving fails the attempt automatically.
+        Do not switch sections or close this tab — leaving fails the attempt. Scores are calculated
+        on the server.
       </p>
 
       {current ? (
@@ -325,9 +309,7 @@ export function QuizTakePage() {
                       type="radio"
                       name={current.id}
                       checked={answers[current.id] === opt}
-                      onChange={() =>
-                        setAnswers((a) => ({ ...a, [current.id]: opt }))
-                      }
+                      onChange={() => setAnswers((a) => ({ ...a, [current.id]: opt }))}
                     />
                     {opt}
                   </label>
@@ -352,9 +334,7 @@ export function QuizTakePage() {
               <input
                 className="flex h-11 w-full rounded-xl border border-border bg-surface-elevated px-3 text-sm"
                 value={answers[current.id] ?? ''}
-                onChange={(e) =>
-                  setAnswers((a) => ({ ...a, [current.id]: e.target.value }))
-                }
+                onChange={(e) => setAnswers((a) => ({ ...a, [current.id]: e.target.value }))}
                 placeholder="Your answer"
               />
             ) : null}
@@ -373,12 +353,8 @@ export function QuizTakePage() {
                   Next
                 </Button>
               ) : (
-                <Button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => void finalize(false, true)}
-                >
-                  {submitting ? <Spinner className="h-4 w-4" /> : 'Submit quiz'}
+                <Button type="button" disabled={submitting} onClick={() => void finalize(false)}>
+                  {submitting ? <Spinner className="h-4 w-4" /> : 'Submit for grading'}
                 </Button>
               )}
             </div>
