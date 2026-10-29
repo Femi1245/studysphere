@@ -1,4 +1,28 @@
 -- Curriculum subjects + theory/practical study books with student progress tracking
+-- Self-contained: does not require ss_ensure_trigger / ss_ensure_policy helpers.
+
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid() AND p.role = 'admin'
+  );
+$$;
 
 CREATE TABLE IF NOT EXISTS public.curriculum_subjects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -59,68 +83,67 @@ CREATE INDEX IF NOT EXISTS recommended_study_books_programme_id_idx
 CREATE INDEX IF NOT EXISTS student_book_progress_user_id_idx
   ON public.student_book_progress (user_id);
 
-SELECT public.ss_ensure_trigger('curriculum_subjects_set_updated_at', 'public.curriculum_subjects');
-SELECT public.ss_ensure_trigger('recommended_study_books_set_updated_at', 'public.recommended_study_books');
-SELECT public.ss_ensure_trigger('student_book_progress_set_updated_at', 'public.student_book_progress');
+DROP TRIGGER IF EXISTS curriculum_subjects_set_updated_at ON public.curriculum_subjects;
+CREATE TRIGGER curriculum_subjects_set_updated_at
+  BEFORE UPDATE ON public.curriculum_subjects
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS recommended_study_books_set_updated_at ON public.recommended_study_books;
+CREATE TRIGGER recommended_study_books_set_updated_at
+  BEFORE UPDATE ON public.recommended_study_books
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS student_book_progress_set_updated_at ON public.student_book_progress;
+CREATE TRIGGER student_book_progress_set_updated_at
+  BEFORE UPDATE ON public.student_book_progress
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 ALTER TABLE public.curriculum_subjects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recommended_study_books ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.student_book_progress ENABLE ROW LEVEL SECURITY;
 
-SELECT public.ss_ensure_policy(
-  'curriculum_subjects_select_published',
-  'public.curriculum_subjects',
-  'SELECT',
-  'is_published = true OR public.is_admin()'
-);
-SELECT public.ss_ensure_policy(
-  'curriculum_subjects_admin_all',
-  'public.curriculum_subjects',
-  'ALL',
-  'public.is_admin()',
-  'public.is_admin()'
-);
+DROP POLICY IF EXISTS curriculum_subjects_select_published ON public.curriculum_subjects;
+CREATE POLICY curriculum_subjects_select_published
+  ON public.curriculum_subjects FOR SELECT TO authenticated
+  USING (is_published = true OR public.is_admin());
 
-SELECT public.ss_ensure_policy(
-  'recommended_study_books_select_published',
-  'public.recommended_study_books',
-  'SELECT',
-  'is_published = true OR public.is_admin()'
-);
-SELECT public.ss_ensure_policy(
-  'recommended_study_books_admin_all',
-  'public.recommended_study_books',
-  'ALL',
-  'public.is_admin()',
-  'public.is_admin()'
-);
+DROP POLICY IF EXISTS curriculum_subjects_admin_all ON public.curriculum_subjects;
+CREATE POLICY curriculum_subjects_admin_all
+  ON public.curriculum_subjects FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
-SELECT public.ss_ensure_policy(
-  'student_book_progress_select_own',
-  'public.student_book_progress',
-  'SELECT',
-  'auth.uid() = user_id'
-);
-SELECT public.ss_ensure_policy(
-  'student_book_progress_insert_own',
-  'public.student_book_progress',
-  'INSERT',
-  NULL,
-  'auth.uid() = user_id'
-);
-SELECT public.ss_ensure_policy(
-  'student_book_progress_update_own',
-  'public.student_book_progress',
-  'UPDATE',
-  'auth.uid() = user_id',
-  'auth.uid() = user_id'
-);
-SELECT public.ss_ensure_policy(
-  'student_book_progress_delete_own',
-  'public.student_book_progress',
-  'DELETE',
-  'auth.uid() = user_id'
-);
+DROP POLICY IF EXISTS recommended_study_books_select_published ON public.recommended_study_books;
+CREATE POLICY recommended_study_books_select_published
+  ON public.recommended_study_books FOR SELECT TO authenticated
+  USING (is_published = true OR public.is_admin());
+
+DROP POLICY IF EXISTS recommended_study_books_admin_all ON public.recommended_study_books;
+CREATE POLICY recommended_study_books_admin_all
+  ON public.recommended_study_books FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS student_book_progress_select_own ON public.student_book_progress;
+CREATE POLICY student_book_progress_select_own
+  ON public.student_book_progress FOR SELECT TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS student_book_progress_insert_own ON public.student_book_progress;
+CREATE POLICY student_book_progress_insert_own
+  ON public.student_book_progress FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS student_book_progress_update_own ON public.student_book_progress;
+CREATE POLICY student_book_progress_update_own
+  ON public.student_book_progress FOR UPDATE TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS student_book_progress_delete_own ON public.student_book_progress;
+CREATE POLICY student_book_progress_delete_own
+  ON public.student_book_progress FOR DELETE TO authenticated
+  USING (auth.uid() = user_id);
 
 -- Curriculum subjects for shared programmes
 INSERT INTO public.curriculum_subjects (
