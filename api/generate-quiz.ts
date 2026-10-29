@@ -85,7 +85,7 @@ function parseQuestions(text: string, count: number): Q[] {
         : t.includes('short')
           ? 'short_answer'
           : 'multiple_choice'
-      return {
+      const row: Q = {
         question_type,
         prompt,
         options,
@@ -93,10 +93,11 @@ function parseQuestions(text: string, count: number): Q[] {
         explanation: q.explanation
           ? String(q.explanation)
           : 'AI-generated practice item — verify with your materials.',
-      } satisfies Q
+      }
+      return row
     })
-    .filter(Boolean)
-    .slice(0, count) as Q[]
+    .filter((q): q is Q => Boolean(q))
+    .slice(0, count)
 }
 
 async function callGroq(

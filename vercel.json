@@ -1,16 +1,5 @@
 {
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ],
-  "functions": {
-    "api/generate-quiz.ts": {
-      "maxDuration": 60
-    },
-    "api/grade-quiz.ts": {
-      "maxDuration": 30
-    },
-    "api/ai-tutor.ts": {
-      "maxDuration": 30
-    }
-  }
+  ]
 }
