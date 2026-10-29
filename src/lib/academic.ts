@@ -98,12 +98,18 @@ export async function fetchDepartments(
 
 /**
  * Institution programmes for the education level, plus shared national programmes.
+ * Falls back to all shared programmes if the education-level filter returns nothing
+ * (common when seed UUIDs do not match this project's education_levels ids).
  */
 export async function fetchProgrammes(
   supabase: SupabaseClient,
   filters: { institutionId?: string; educationLevelId?: string },
 ): Promise<Programme[]> {
   const byId = new Map<string, Programme>()
+
+  const addRows = (rows: Programme[] | null | undefined) => {
+    for (const row of rows ?? []) byId.set(row.id, row)
+  }
 
   if (filters.institutionId) {
     let q = supabase
@@ -115,10 +121,9 @@ export async function fetchProgrammes(
     if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
     const { data, error } = await q.limit(200)
     if (error) throw error
-    for (const row of (data as Programme[]) ?? []) byId.set(row.id, row)
+    addRows(data as Programme[])
   }
 
-  // Always include shared programmes for the education level so campuses without seed still work
   {
     let q = supabase
       .from('programmes')
@@ -127,11 +132,34 @@ export async function fetchProgrammes(
       .is('institution_id', null)
       .order('name')
     if (filters.educationLevelId) q = q.eq('education_level_id', filters.educationLevelId)
-    const { data, error } = await q.limit(200)
+    const { data, error } = await q.limit(300)
     if (error) throw error
-    for (const row of (data as Programme[]) ?? []) {
-      if (!byId.has(row.id)) byId.set(row.id, row)
-    }
+    addRows(data as Programme[])
+  }
+
+  // Fallback: shared programmes for any level (ID mismatch / missing level filter)
+  if (byId.size === 0) {
+    const { data, error } = await supabase
+      .from('programmes')
+      .select('*')
+      .eq('is_active', true)
+      .is('institution_id', null)
+      .order('name')
+      .limit(300)
+    if (error) throw error
+    addRows(data as Programme[])
+  }
+
+  // Last resort: any active programmes
+  if (byId.size === 0) {
+    const { data, error } = await supabase
+      .from('programmes')
+      .select('*')
+      .eq('is_active', true)
+      .order('name')
+      .limit(300)
+    if (error) throw error
+    addRows(data as Programme[])
   }
 
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))

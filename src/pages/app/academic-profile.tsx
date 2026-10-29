@@ -106,10 +106,17 @@ export function AcademicProfilePage() {
     [institutions],
   )
 
-  const programmeOptions = useMemo(
-    () => programmes.map((p) => ({ value: p.id, label: p.name })),
-    [programmes],
-  )
+  const programmeOptions = useMemo(() => {
+    if (programmes.length > 0) {
+      return programmes.map((p) => ({ value: p.id, label: p.name }))
+    }
+    // Offline/local fallback until SQL seed is applied — stores as course of study
+    return NIGERIA_COURSES_OF_STUDY.map((name) => ({
+      value: `local:${name}`,
+      label: name,
+      description: 'Suggested Nigeria course (seed SQL for full programmes)',
+    }))
+  }, [programmes])
 
   const departmentOptions = useMemo(
     () => departments.map((d) => ({ value: d.id, label: d.name })),
@@ -274,15 +281,24 @@ export function AcademicProfilePage() {
   }
 
   const pickProgramme = (id: string) => {
+    if (id.startsWith('local:')) {
+      const name = id.slice('local:'.length)
+      setProgrammeId('')
+      setCourseOfStudy(name)
+      return
+    }
     setProgrammeId(id)
     const prog = programmes.find((p) => p.id === id)
     if (prog?.department_id) setDepartmentId(prog.department_id)
-    if (prog && !courseOfStudy.trim()) {
+    if (prog) {
       const cleaned = prog.name
         .replace(/^B\.(Sc|Eng|A|Ed|Agric|NSc|MLS)\.?\s*/i, '')
         .replace(/^LL\.B\.?\s*/i, '')
+        .replace(/^MBBS\s*/i, '')
+        .replace(/^Doctor of\s+/i, '')
+        .replace(/\s*\(.*\)$/, '')
         .trim()
-      setCourseOfStudy(cleaned)
+      if (cleaned) setCourseOfStudy(cleaned)
     }
   }
 
@@ -439,7 +455,7 @@ export function AcademicProfilePage() {
                 options={programmeOptions}
                 value={programmeId}
                 onChange={pickProgramme}
-                emptyText="No programmes loaded — run Nigeria programme SQL seed"
+                emptyText="Type to filter programmes"
               />
               <Typeahead
                 label="Department"
