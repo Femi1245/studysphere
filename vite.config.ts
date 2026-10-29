@@ -4,6 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import {
+  buildFallbackQuizQuestions,
+  parseGeneratedQuizQuestions,
+} from './api/lib/parse-quiz-questions.ts'
 import { createUserClient, runGradeQuiz } from './api/lib/run-grade-quiz.ts'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
@@ -181,65 +185,87 @@ function aiTutorDevPlugin(env: Record<string, string>): Plugin {
               const count = Math.min(Math.max(Number(body.count) || 0, 1), 40)
               const course = String(body.course || 'General studies').slice(0, 200)
               const difficulty = body.difficulty || 'medium'
-              const prompt = `Generate exactly ${count} exam questions for "${course}" (${difficulty}). Return ONLY a JSON array of objects with keys: question_type ("multiple_choice"|"true_false"|"short_answer"), prompt, options (4 strings for MCQ else null), correct_answer, explanation. Prefer multiple_choice.`
-              const aiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${apiKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model: env.GROQ_MODEL || 'openai/gpt-oss-20b',
-                  messages: [
-                    {
-                      role: 'system',
-                      content: 'Output only valid JSON arrays of quiz questions.',
-                    },
-                    { role: 'user', content: prompt },
-                  ],
-                  temperature: 0.4,
-                }),
-              })
-              if (!aiRes.ok) {
-                const errText = await aiRes.text()
-                res.statusCode = 502
+              const primary = env.GROQ_MODEL || 'llama-3.1-8b-instant'
+              const models =
+                primary === 'llama-3.1-8b-instant'
+                  ? [primary]
+                  : [primary, 'llama-3.1-8b-instant']
+
+              let questions: ReturnType<typeof parseGeneratedQuizQuestions> | null = null
+              let lastError = ''
+              let usedModel = primary
+
+              for (const model of models) {
+                for (const tryCount of [count, Math.min(count, 10), Math.min(count, 5)]) {
+                  try {
+                    const prompt = `Create ${tryCount} exam practice questions for Nigerian students on: "${course}" (${difficulty} difficulty).
+Return ONLY valid JSON with this exact shape:
+{"questions":[{"question_type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correct_answer":"exact option text","explanation":"..."}]}
+Rules: prefer multiple_choice with 4 options; correct_answer must match one option; no markdown.`
+                    const aiRes = await fetch(
+                      'https://api.groq.com/openai/v1/chat/completions',
+                      {
+                        method: 'POST',
+                        headers: {
+                          Authorization: `Bearer ${apiKey}`,
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          model,
+                          messages: [
+                            {
+                              role: 'system',
+                              content: 'You are a quiz generator. Respond with JSON only.',
+                            },
+                            { role: 'user', content: prompt },
+                          ],
+                          temperature: 0.3,
+                          response_format: { type: 'json_object' },
+                        }),
+                      },
+                    )
+                    if (!aiRes.ok) {
+                      lastError = `AI provider error: ${(await aiRes.text()).slice(0, 180)}`
+                      continue
+                    }
+                    const completion = (await aiRes.json()) as {
+                      choices?: Array<{ message?: { content?: string } }>
+                    }
+                    const text = completion.choices?.[0]?.message?.content?.trim() ?? '{}'
+                    questions = parseGeneratedQuizQuestions(text, tryCount)
+                    usedModel = model
+                    break
+                  } catch (e) {
+                    lastError = e instanceof Error ? e.message : 'Generate failed'
+                  }
+                }
+                if (questions?.length) break
+              }
+
+              if (!questions?.length) {
+                questions = buildFallbackQuizQuestions(course, count, difficulty)
+                res.statusCode = 200
                 res.setHeader('Content-Type', 'application/json')
                 res.end(
                   JSON.stringify({
-                    error: 'AI provider error',
-                    detail: errText.slice(0, 200),
+                    questions,
+                    ai_generated: false,
+                    fallback: true,
+                    warning: lastError || 'Could not parse generated questions',
                   }),
                 )
                 return
               }
-              const completion = (await aiRes.json()) as {
-                choices?: Array<{ message?: { content?: string } }>
-              }
-              let text = completion.choices?.[0]?.message?.content?.trim() ?? '[]'
-              const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-              if (fence) text = fence[1]!.trim()
-              const parsed = JSON.parse(text) as Array<{
-                question_type?: string
-                prompt?: string
-                options?: string[] | null
-                correct_answer?: string
-                explanation?: string | null
-              }>
-              const questions = parsed
-                .filter((q) => q?.prompt && q?.correct_answer)
-                .slice(0, count)
-                .map((q) => ({
-                  question_type: q.question_type || 'multiple_choice',
-                  prompt: String(q.prompt),
-                  options: Array.isArray(q.options) ? q.options.map(String) : null,
-                  correct_answer: String(q.correct_answer),
-                  explanation: q.explanation
-                    ? String(q.explanation)
-                    : 'AI-generated practice item.',
-                }))
+
               res.statusCode = 200
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ questions, ai_generated: true }))
+              res.end(
+                JSON.stringify({
+                  questions: questions.slice(0, count),
+                  ai_generated: true,
+                  model: usedModel,
+                }),
+              )
             } catch (e) {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')

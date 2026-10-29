@@ -48,7 +48,7 @@ export async function generateQuestionsForSubject(input: {
   let lastError = ''
 
   while (remaining > 0) {
-    const batch = Math.min(remaining, 15)
+    const batch = Math.min(remaining, 10)
     const courseLabel = [subject, topicFilter].filter(Boolean).join(' — ')
     try {
       const res = await fetch('/api/generate-quiz', {
@@ -63,26 +63,31 @@ export async function generateQuestionsForSubject(input: {
           difficulty: difficulty === 'all' ? 'medium' : difficulty,
         }),
       })
+      const data = (await res.json().catch(() => ({}))) as {
+        questions?: GenQuestion[]
+        error?: string
+        detail?: string
+        warning?: string
+        fallback?: boolean
+      }
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: string }
-        lastError = err.error || err.detail || `Generate failed (${res.status})`
-        // Retry once with a smaller batch if provider choked on size
+        lastError = data.error || data.detail || `Generate failed (${res.status})`
         if (batch > 5) {
           remaining = Math.min(remaining, 5)
           continue
         }
         break
       }
-      const data = (await res.json()) as { questions?: GenQuestion[] }
       const chunk = (data.questions ?? []).map((q) => ({
         ...q,
         topic_label: topicFilter || q.topic_label || subject,
         bank_question_id: null as string | null,
       }))
       if (!chunk.length) {
-        lastError = 'AI returned no questions'
+        lastError = data.warning || data.error || 'AI returned no questions'
         break
       }
+      if (data.warning) lastError = data.warning
       out.push(...chunk)
       remaining -= chunk.length
     } catch (e) {

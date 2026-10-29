@@ -1,11 +1,55 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import {
+  buildFallbackQuizQuestions,
+  parseGeneratedQuizQuestions,
+} from './lib/parse-quiz-questions'
 
-type Q = {
-  question_type: 'multiple_choice' | 'true_false' | 'short_answer'
-  prompt: string
-  options: string[] | null
-  correct_answer: string
-  explanation: string | null
+async function callGroq(input: {
+  apiKey: string
+  model: string
+  count: number
+  course: string
+  difficulty: string
+}): Promise<string> {
+  const { apiKey, model, count, course, difficulty } = input
+  const prompt = `Create ${count} exam practice questions for Nigerian students on: "${course}" (${difficulty} difficulty).
+Return ONLY valid JSON with this exact shape:
+{"questions":[{"question_type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correct_answer":"exact option text","explanation":"..."}]}
+Rules:
+- Prefer multiple_choice with exactly 4 options
+- correct_answer must match one option exactly
+- No markdown, no extra commentary
+- Educational practice only (not official exam claims)`
+
+  const aiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a quiz generator. Respond with JSON only.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    }),
+  })
+
+  if (!aiRes.ok) {
+    const t = await aiRes.text()
+    throw new Error(`AI provider error: ${t.slice(0, 180)}`)
+  }
+
+  const completion = (await aiRes.json()) as {
+    choices?: Array<{ message?: { content?: string } }>
+  }
+  return completion.choices?.[0]?.message?.content?.trim() ?? '{}'
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -24,63 +68,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const body = req.body as { count?: number; course?: string; difficulty?: string }
-  const count = Math.min(Math.max(Number(body.count) || 0, 1), 100)
+  const count = Math.min(Math.max(Number(body.count) || 0, 1), 40)
   const course = String(body.course || 'General studies').slice(0, 200)
   const difficulty = body.difficulty || 'medium'
+  const primary = process.env.GROQ_MODEL || 'llama-3.1-8b-instant'
+  const fallbackModel = 'llama-3.1-8b-instant'
 
-  const prompt = `Generate exactly ${count} exam questions for the course "${course}" at ${difficulty} difficulty for Nigerian students.
-Return ONLY a JSON array (no markdown) of objects with keys:
-question_type ("multiple_choice" | "true_false" | "short_answer"),
-prompt (string),
-options (string array of 4 for multiple_choice, null otherwise),
-correct_answer (exact option text or True/False or short string),
-explanation (short string).
-Prefer multiple_choice. Do not invent official curriculum claim — educational practice questions only.`
+  const models = primary === fallbackModel ? [primary] : [primary, fallbackModel]
+  let lastError = ''
 
-  const aiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
-      messages: [
-        { role: 'system', content: 'You output only valid JSON arrays of quiz questions.' },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.4,
-    }),
+  for (const model of models) {
+    // Try full batch, then smaller batches if parse fails
+    for (const tryCount of [count, Math.min(count, 10), Math.min(count, 5)]) {
+      try {
+        const text = await callGroq({
+          apiKey,
+          model,
+          count: tryCount,
+          course,
+          difficulty,
+        })
+        const questions = parseGeneratedQuizQuestions(text, tryCount)
+        if (!questions.length) throw new Error('Empty question list')
+
+        // If we only got a partial batch but need more, keep what we have for this response;
+        // client loops for remaining.
+        return res.status(200).json({
+          questions: questions.slice(0, count),
+          ai_generated: true,
+          model,
+        })
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : 'Generate failed'
+      }
+    }
+  }
+
+  // Last resort so the exam can still start
+  const fallback = buildFallbackQuizQuestions(course, count, difficulty)
+  return res.status(200).json({
+    questions: fallback,
+    ai_generated: false,
+    fallback: true,
+    warning: lastError || 'Could not parse generated questions',
   })
-
-  if (!aiRes.ok) {
-    const t = await aiRes.text()
-    return res.status(502).json({ error: 'AI provider error', detail: t.slice(0, 200) })
-  }
-
-  const completion = (await aiRes.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  let text = completion.choices?.[0]?.message?.content?.trim() ?? '[]'
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (fence) text = fence[1]!.trim()
-  let questions: Q[] = []
-  try {
-    questions = JSON.parse(text) as Q[]
-  } catch {
-    return res.status(502).json({ error: 'Could not parse generated questions' })
-  }
-
-  const cleaned = questions
-    .filter((q) => q?.prompt && q?.correct_answer)
-    .slice(0, count)
-    .map((q) => ({
-      question_type: q.question_type || 'multiple_choice',
-      prompt: String(q.prompt),
-      options: Array.isArray(q.options) ? q.options.map(String) : null,
-      correct_answer: String(q.correct_answer),
-      explanation: q.explanation ? String(q.explanation) : 'AI-generated practice item — verify with your materials.',
-    }))
-
-  return res.status(200).json({ questions: cleaned, ai_generated: true })
 }
