@@ -347,7 +347,7 @@ export function AcademicProfilePage() {
       })
       .eq('id', user.id)
 
-    // Prefer manually checked courses; otherwise auto-match from programme / course of study
+    // Prefer manually checked courses; otherwise only enrol courses that strictly match the profile
     let courseIds = [...selectedCourses]
     if (courseIds.length === 0) {
       const matched = await resolveCoursesForProfile(supabase, {
@@ -366,7 +366,7 @@ export function AcademicProfilePage() {
         created_at: '',
         updated_at: '',
       })
-      courseIds = matched.slice(0, 12).map((c) => c.id)
+      courseIds = matched.slice(0, 16).map((c) => c.id)
       setSelectedCourses(courseIds)
     }
 
@@ -409,8 +409,8 @@ export function AcademicProfilePage() {
       title: 'Academic profile saved',
       description:
         courseIds.length > 0
-          ? `${courseIds.length} course(s) and ${syncedSubjects.length} subject(s) linked. Open Study books for theory & practical texts.`
-          : 'Profile saved. Add courses or re-save after catalogue courses load.',
+          ? `${courseIds.length} matching course(s) and ${syncedSubjects.length} subject(s) linked. Exams use your course of study.`
+          : 'Profile saved. Exams/quizzes will use your course of study even if no catalogue course matches yet.',
       kind: 'success',
     })
     await load()

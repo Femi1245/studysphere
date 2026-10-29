@@ -18,13 +18,20 @@ import { useToast } from '@/components/ui/toast'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
 import { fetchDefaultPassMark } from '@/lib/academic'
-import { loadAcademicQuizContext } from '@/lib/academic-sync'
+import { ACADEMIC_SUBJECT_VALUE, loadAcademicQuizContext } from '@/lib/academic-sync'
 import {
   durationMinutesForCount,
   MIN_QUIZ_QUESTIONS,
   QUIZ_QUESTION_COUNTS,
   type QuizQuestionCount,
 } from '@/lib/quiz-timing'
+import {
+  createQuizAttempt,
+  fingerprintPrompt,
+  generateQuestionsForSubject,
+  parseQuestionOptions,
+  shuffleItems,
+} from '@/lib/start-academic-quiz'
 import { trySupabase } from '@/lib/supabase/client'
 import type {
   BankQuestion,
@@ -33,35 +40,6 @@ import type {
   QuestionDifficulty,
   StudentCourseEnrolment,
 } from '@/types/database'
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j]!, a[i]!]
-  }
-  return a
-}
-
-function parseOptions(raw: unknown): string[] | null {
-  if (Array.isArray(raw)) return raw.map(String)
-  if (raw && typeof raw === 'object') return Object.values(raw as Record<string, string>)
-  return null
-}
-
-type GenQuestion = {
-  question_type: 'multiple_choice' | 'true_false' | 'short_answer'
-  prompt: string
-  options: string[] | null
-  correct_answer: string
-  explanation: string | null
-  topic_label?: string | null
-  bank_question_id?: string | null
-}
-
-function fp(prompt: string): string {
-  return prompt.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 200)
-}
 
 export function QuizPracticePage() {
   const { user, session } = useAuth()
@@ -76,7 +54,8 @@ export function QuizPracticePage() {
     (StudentCourseEnrolment & { catalogue_courses: CatalogueCourse | null })[]
   >([])
   const [academicLabel, setAcademicLabel] = useState('')
-  const [courseId, setCourseId] = useState(params.get('course') ?? '')
+  const [hasAcademicSetup, setHasAcademicSetup] = useState(false)
+  const [courseId, setCourseId] = useState(params.get('course') ?? ACADEMIC_SUBJECT_VALUE)
   const [banks, setBanks] = useState<QuestionBank[]>([])
   const [bankId, setBankId] = useState(params.get('bank') ?? '')
   const [questions, setQuestions] = useState<BankQuestion[]>([])
@@ -86,6 +65,8 @@ export function QuizPracticePage() {
   const [starting, setStarting] = useState(false)
 
   const durationMinutes = durationMinutesForCount(count)
+  const usingAcademicSubject = courseId === ACADEMIC_SUBJECT_VALUE || !courseId
+  const activeCatalogueCourseId = usingAcademicSubject ? '' : courseId
 
   const loadEnrolments = useCallback(async () => {
     if (!supabase || !user) return
@@ -93,31 +74,35 @@ export function QuizPracticePage() {
     const ctx = await loadAcademicQuizContext(supabase, user.id)
     setEnrolments(ctx.enrolments)
     setAcademicLabel(ctx.subjectLabel)
+    setHasAcademicSetup(ctx.hasAcademicSetup)
+    if (!params.get('course')) setCourseId(ACADEMIC_SUBJECT_VALUE)
     const def = await fetchDefaultPassMark(supabase)
     setPassMark(String(def))
     setLoading(false)
-  }, [supabase, user])
+  }, [supabase, user, params])
 
   useEffect(() => {
     void loadEnrolments()
   }, [loadEnrolments])
 
   useEffect(() => {
-    if (!supabase || !courseId) {
+    if (!supabase || !activeCatalogueCourseId) {
       setBanks([])
+      setQuestions([])
+      setBankId('')
       return
     }
     void supabase
       .from('question_banks')
       .select('*')
-      .eq('catalogue_course_id', courseId)
+      .eq('catalogue_course_id', activeCatalogueCourseId)
       .eq('is_published', true)
       .then(({ data }) => setBanks((data as QuestionBank[]) ?? []))
-  }, [supabase, courseId])
+  }, [supabase, activeCatalogueCourseId])
 
   useEffect(() => {
     if (!supabase || !bankId) {
-      setQuestions([])
+      if (!bankId) setQuestions([])
       return
     }
     void supabase
@@ -128,57 +113,22 @@ export function QuizPracticePage() {
       .then(({ data }) => setQuestions((data as BankQuestion[]) ?? []))
   }, [supabase, bankId])
 
-  useEffect(() => {
-    if (banks.length === 1 && !bankId) setBankId(banks[0]!.id)
-  }, [banks, bankId])
-
-  useEffect(() => {
-    if (!courseId && enrolments[0]) setCourseId(enrolments[0].catalogue_course_id)
-  }, [enrolments, courseId])
-
   const pool = useMemo(() => {
     let q = questions
     if (difficulty !== 'all') q = q.filter((x) => x.difficulty === difficulty)
     return q
   }, [questions, difficulty])
 
-  const generateExtra = async (
-    need: number,
-    courseTitle: string,
-  ): Promise<GenQuestion[]> => {
-    const token = session?.access_token
-    if (!token || need <= 0) return []
-    const out: GenQuestion[] = []
-    let remaining = need
-    while (remaining > 0) {
-      const batch = Math.min(remaining, 25)
-      const res = await fetch('/api/generate-quiz', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          count: batch,
-          course: courseTitle,
-          difficulty: difficulty === 'all' ? 'medium' : difficulty,
-        }),
-      })
-      if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string }
-        throw new Error(err.error || 'Could not generate enough questions')
-      }
-      const data = (await res.json()) as { questions?: GenQuestion[] }
-      const chunk = data.questions ?? []
-      if (chunk.length === 0) break
-      out.push(...chunk)
-      remaining -= chunk.length
-    }
-    return out
-  }
-
   const startQuiz = async () => {
-    if (!supabase || !user || !courseId) return
+    if (!supabase || !user) return
+    if (!hasAcademicSetup && !activeCatalogueCourseId) {
+      toast({
+        title: 'Set academic profile first',
+        description: 'Save your programme / course of study so questions match what you study.',
+        kind: 'error',
+      })
+      return
+    }
     if (count < MIN_QUIZ_QUESTIONS) {
       toast({
         title: 'Minimum 30 questions',
@@ -188,94 +138,88 @@ export function QuizPracticePage() {
       return
     }
 
+    const token = session?.access_token
+    if (!token) {
+      toast({ title: 'Sign in required', kind: 'error' })
+      return
+    }
+
     setStarting(true)
     try {
-      const course =
-        enrolments.find((e) => e.catalogue_course_id === courseId)?.catalogue_courses
-      const courseLabel = course
-        ? `${course.code} — ${course.title}`
-        : academicLabel || 'Selected course'
-      const generateLabel = [academicLabel, courseLabel].filter(Boolean).join(' · ') || courseLabel
+      const course = enrolments.find(
+        (e) => e.catalogue_course_id === activeCatalogueCourseId,
+      )?.catalogue_courses
+      const subjectForQuestions =
+        academicLabel || (course ? `${course.code} — ${course.title}` : 'Your academic subject')
 
-      let picked: GenQuestion[] = shuffle(pool)
+      let picked = shuffleItems(pool)
         .slice(0, count)
         .map((q) => ({
           question_type: q.question_type,
           prompt: q.prompt,
-          options: parseOptions(q.options),
+          options: parseQuestionOptions(q.options),
           correct_answer: q.correct_answer,
           explanation: q.explanation,
           topic_label: q.topic_label,
           bank_question_id: q.id,
         }))
 
+      const seenFp = new Set(picked.map((q) => fingerprintPrompt(q.prompt)))
+
       if (picked.length < count) {
-        const extra = await generateExtra(count - picked.length, generateLabel)
-        picked = [...picked, ...extra].slice(0, count)
+        const { questions: extra, error: genErr } = await generateQuestionsForSubject({
+          accessToken: token,
+          subject: subjectForQuestions,
+          need: count - picked.length,
+          difficulty,
+        })
+        for (const q of extra) {
+          const k = fingerprintPrompt(q.prompt)
+          if (!k || seenFp.has(k)) continue
+          seenFp.add(k)
+          picked.push(q)
+          if (picked.length >= count) break
+        }
+        if (picked.length < count && genErr) {
+          toast({ title: 'Could not fill all questions', description: genErr, kind: 'error' })
+        }
       }
 
-      const seenFp = new Set<string>()
       picked = picked.filter((q) => {
-        const k = fp(q.prompt)
-        if (seenFp.has(k)) return false
-        seenFp.add(k)
-        return true
+        const k = fingerprintPrompt(q.prompt)
+        return Boolean(k)
       })
 
       if (picked.length < MIN_QUIZ_QUESTIONS) {
         toast({
           title: 'Not enough questions',
-          description: `Need at least ${MIN_QUIZ_QUESTIONS}. Bank has ${pool.length}; AI could not fill the rest. Add GROQ_API_KEY or grow the bank.`,
+          description: `Need at least ${MIN_QUIZ_QUESTIONS}. Check GROQ_API_KEY or edit your academic profile and retry.`,
           kind: 'error',
         })
         setStarting(false)
         return
       }
 
+      picked = picked.slice(0, count)
       const pass = Number.parseFloat(passMark) || 50
-      const title = `${course?.code ?? 'Course'} assessment — ${picked.length}Q / ${durationMinutes}m`
+      const title = `${usingAcademicSubject ? 'Academic' : course?.code ?? 'Course'} assessment — ${picked.length}Q / ${durationMinutes}m`
 
-      const { data: quiz, error: quizErr } = await supabase
-        .from('quizzes')
-        .insert({
-          user_id: user.id,
-          title,
-          description: `Auto-provided questions for ${courseLabel}`,
-          catalogue_course_id: courseId,
-          bank_id: bankId || null,
-          difficulty: difficulty === 'all' ? null : difficulty,
-          pass_mark: pass,
-          mode: 'assessment',
-          question_count: picked.length,
-          is_timed: true,
-          randomized: true,
-          duration_minutes: durationMinutes,
-        })
-        .select('id')
-        .single()
+      const created = await createQuizAttempt({
+        supabase,
+        userId: user.id,
+        title,
+        description: `Questions for academic profile: ${subjectForQuestions}`,
+        catalogueCourseId: activeCatalogueCourseId || null,
+        bankId: usingAcademicSubject ? null : bankId || null,
+        difficulty,
+        passMark: pass,
+        mode: 'assessment',
+        durationMinutes,
+        questions: picked,
+      })
 
-      if (quizErr || !quiz) {
-        toast({ title: 'Could not start', description: quizErr?.message, kind: 'error' })
-        setStarting(false)
-        return
-      }
-
-      const rows = picked.map((q, i) => ({
-        quiz_id: quiz.id,
-        user_id: user.id,
-        question_type: q.question_type,
-        prompt: q.prompt,
-        options: q.options,
-        correct_answer: q.correct_answer,
-        explanation: q.explanation,
-        order_index: i,
-        topic_label: q.topic_label ?? null,
-        bank_question_id: q.bank_question_id ?? null,
-        source_fingerprint: fp(q.prompt),
-      }))
-      const { error: qErr } = await supabase.from('quiz_questions').insert(rows)
-      if (qErr) {
-        toast({ title: 'Questions failed', description: qErr.message, kind: 'error' })
+      if ('error' in created) {
+        toast({ title: 'Could not start', description: created.error, kind: 'error' })
         setStarting(false)
         return
       }
@@ -283,7 +227,7 @@ export function QuizPracticePage() {
       const startedAt = new Date()
       const endsAt = new Date(startedAt.getTime() + durationMinutes * 60_000)
       startSession({
-        quizId: quiz.id,
+        quizId: created.quizId,
         attemptId: '',
         userId: user.id,
         startedAt: startedAt.toISOString(),
@@ -293,7 +237,7 @@ export function QuizPracticePage() {
         mode: 'assessment',
       })
 
-      navigate(`/app/quizzes/${quiz.id}/take`, { replace: true })
+      navigate(`/app/quizzes/${created.quizId}/take`, { replace: true })
     } catch (e) {
       toast({
         title: 'Start failed',
@@ -321,8 +265,8 @@ export function QuizPracticePage() {
       </div>
 
       <p className="text-sm text-ink-muted">
-        Questions are provided from your academic profile courses. Choose how many to answer —
-        time is set automatically. Leaving mid-quiz fails the attempt.
+        Questions follow the academic profile you saved (editable anytime). Leaving mid-quiz fails
+        the attempt.
       </p>
       {academicLabel ? (
         <p className="text-sm text-ink">
@@ -330,10 +274,10 @@ export function QuizPracticePage() {
         </p>
       ) : null}
 
-      {enrolments.length === 0 ? (
+      {!hasAcademicSetup ? (
         <EmptyState
-          title="No courses linked yet"
-          description="Save your academic profile so quizzes can load questions for your programme / course of study."
+          title="Set academic profile first"
+          description="Save your programme / course of study so quizzes match what you study."
           action={
             <Button asChild size="sm">
               <Link to="/app/academic-profile">Set academic profile</Link>
@@ -347,12 +291,15 @@ export function QuizPracticePage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Your course</Label>
-              <Select value={courseId} onValueChange={setCourseId}>
+              <Label>Subject / course</Label>
+              <Select value={courseId || ACADEMIC_SUBJECT_VALUE} onValueChange={setCourseId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select course" />
+                  <SelectValue placeholder="Your academic subject" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value={ACADEMIC_SUBJECT_VALUE}>
+                    My academic profile — {academicLabel}
+                  </SelectItem>
                   {enrolments.map((e) => (
                     <SelectItem key={e.id} value={e.catalogue_course_id}>
                       {e.catalogue_courses?.code} — {e.catalogue_courses?.title}
@@ -362,10 +309,13 @@ export function QuizPracticePage() {
               </Select>
             </div>
 
-            {banks.length > 0 ? (
+            {!usingAcademicSubject && banks.length > 0 ? (
               <div className="space-y-2">
                 <Label>Question bank (optional source)</Label>
-                <Select value={bankId || 'none'} onValueChange={(v) => setBankId(v === 'none' ? '' : v)}>
+                <Select
+                  value={bankId || 'none'}
+                  onValueChange={(v) => setBankId(v === 'none' ? '' : v)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Auto" />
                   </SelectTrigger>
@@ -381,8 +331,8 @@ export function QuizPracticePage() {
               </div>
             ) : (
               <p className="text-xs text-ink-muted">
-                No bank for this course yet — questions will be generated for your course topic
-                when you start (requires Groq).
+                Questions are generated for your saved academic subject
+                {academicLabel ? ` (${academicLabel})` : ''}.
               </p>
             )}
 
@@ -434,10 +384,10 @@ export function QuizPracticePage() {
 
             <Button
               className="w-full"
-              disabled={!courseId || starting}
+              disabled={starting}
               onClick={() => void startQuiz()}
             >
-              {starting ? 'Preparing questions…' : 'Start assessment'}
+              {starting ? 'Preparing questions for your academic subject…' : 'Start assessment'}
             </Button>
           </CardContent>
         </Card>
