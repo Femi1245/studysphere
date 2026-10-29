@@ -64,28 +64,36 @@ export async function fetchInstitutions(
 }
 
 /**
- * Institution-specific departments, falling back to shared (institution_id IS NULL).
+ * Departments: institution-specific (if any) plus all shared Nigeria departments.
  */
 export async function fetchDepartments(
   supabase: SupabaseClient,
-  institutionId: string,
+  institutionId?: string,
 ): Promise<Department[]> {
-  const { data: specific, error } = await supabase
-    .from('departments')
-    .select('*')
-    .eq('institution_id', institutionId)
-    .order('name')
-  if (error) throw error
-  if (specific?.length) return specific as Department[]
+  const byId = new Map<string, Department>()
+
+  if (institutionId) {
+    const { data, error } = await supabase
+      .from('departments')
+      .select('*')
+      .eq('institution_id', institutionId)
+      .order('name')
+    if (error) throw error
+    for (const row of (data as Department[]) ?? []) byId.set(row.id, row)
+  }
 
   const { data: shared, error: sharedErr } = await supabase
     .from('departments')
     .select('*')
     .is('institution_id', null)
     .order('name')
-    .limit(100)
+    .limit(300)
   if (sharedErr) throw sharedErr
-  return (shared as Department[]) ?? []
+  for (const row of (shared as Department[]) ?? []) {
+    if (!byId.has(row.id)) byId.set(row.id, row)
+  }
+
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /**
