@@ -19,14 +19,17 @@ type TypeaheadProps = {
   emptyText?: string
   disabled?: boolean
   className?: string
-  /** Prefer showing selected label in the input when closed. */
   selectedLabel?: string
-  /** Allow committing typed text that is not in the options list (e.g. course of study). */
   allowFreeText?: boolean
+  /**
+   * When true, options are already filtered by the server — show them as-is while open.
+   * Still applies a light local filter if the user typed something.
+   */
+  remote?: boolean
 }
 
 /**
- * Search-as-you-type dropdown. Filters local options; optional onQueryChange for remote search.
+ * Search-as-you-type dropdown with live suggestion list.
  */
 export function Typeahead({
   label,
@@ -40,6 +43,7 @@ export function Typeahead({
   className,
   selectedLabel,
   allowFreeText = false,
+  remote = false,
 }: TypeaheadProps) {
   const listId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -51,16 +55,16 @@ export function Typeahead({
     [options, value],
   )
 
+  const displayClosed = selectedLabel || selected?.label || (allowFreeText ? value : '') || ''
+
   useEffect(() => {
-    if (!open) {
-      setQuery(selectedLabel || selected?.label || (allowFreeText ? value : '') || '')
-    }
-  }, [selected, selectedLabel, open, value, allowFreeText])
+    if (!open) setQuery(displayClosed)
+  }, [displayClosed, open])
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) {
-        if (allowFreeText && open && query.trim()) {
+        if (allowFreeText && open && query.trim() && !value) {
           onChange(query.trim())
         }
         setOpen(false)
@@ -68,10 +72,20 @@ export function Typeahead({
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
-  }, [allowFreeText, open, query, onChange])
+  }, [allowFreeText, open, query, onChange, value])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
+    // Remote mode: trust parent list; still soft-filter if helpful
+    if (remote) {
+      if (!q || q === displayClosed.toLowerCase()) return options.slice(0, 100)
+      const soft = options.filter(
+        (o) =>
+          o.label.toLowerCase().includes(q) ||
+          (o.description?.toLowerCase().includes(q) ?? false),
+      )
+      return (soft.length ? soft : options).slice(0, 100)
+    }
     if (!q) return options.slice(0, 80)
     return options
       .filter(
@@ -80,7 +94,7 @@ export function Typeahead({
           (o.description?.toLowerCase().includes(q) ?? false),
       )
       .slice(0, 80)
-  }, [options, query])
+  }, [options, query, remote, displayClosed])
 
   return (
     <div ref={rootRef} className={cn('relative space-y-2', className)}>
@@ -91,10 +105,12 @@ export function Typeahead({
         aria-controls={listId}
         disabled={disabled}
         placeholder={placeholder}
-        value={open ? query : selectedLabel || selected?.label || query}
+        value={open ? query : displayClosed}
         onFocus={() => {
           setOpen(true)
-          setQuery(selectedLabel || selected?.label || '')
+          setQuery(displayClosed)
+          // Kick remote search with current text so suggestions load immediately
+          onQueryChange?.(displayClosed)
         }}
         onChange={(e) => {
           const next = e.target.value
@@ -103,12 +119,19 @@ export function Typeahead({
           onQueryChange?.(next)
           if (allowFreeText) {
             onChange(next)
-          } else if (value && next !== (selectedLabel || selected?.label)) {
-            // Typing away from selection clears it until a new pick
+          } else if (value && next !== displayClosed) {
             onChange('')
           }
         }}
         onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setOpen(false)
+            return
+          }
+          if (e.key === 'ArrowDown') {
+            setOpen(true)
+            return
+          }
           if (e.key === 'Enter' && allowFreeText && query.trim()) {
             e.preventDefault()
             onChange(query.trim())
@@ -121,8 +144,11 @@ export function Typeahead({
         <ul
           id={listId}
           role="listbox"
-          className="absolute z-40 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
+          className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
         >
+          <li className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-ink-muted">
+            Suggestions · {filtered.length}
+          </li>
           {filtered.length === 0 ? (
             <li className="px-3 py-2 text-sm text-ink-muted">{emptyText}</li>
           ) : (

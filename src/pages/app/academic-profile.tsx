@@ -421,12 +421,13 @@ export function AcademicProfilePage() {
           ) : (
             <Typeahead
               label="Institution"
-              placeholder="Start typing school name…"
+              placeholder="Start typing school name — suggestions appear as you type"
               options={institutionOptions}
               value={institutionId}
               selectedLabel={selectedInstitution?.name}
               onChange={pickInstitution}
               onQueryChange={setInstitutionSearch}
+              remote
               emptyText="No institutions match — keep typing or enable Custom institution"
             />
           )}

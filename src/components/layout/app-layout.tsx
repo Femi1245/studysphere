@@ -190,9 +190,21 @@ export function AppLayout() {
             <Bell className="h-5 w-5" />
             Notifications
           </Link>
-          <p className="truncate px-3 text-sm font-medium">
-            {profile?.display_name ?? 'Student'}
-          </p>
+          <Link
+            to="/app/settings"
+            className="mb-2 flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-primary-50 dark:hover:bg-primary-900/40"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-primary-50 text-xs font-semibold text-primary-800 dark:bg-primary-900/50 dark:text-primary-100">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="" className="h-full w-full object-cover" />
+              ) : (
+                (profile?.display_name ?? 'S').slice(0, 1).toUpperCase()
+              )}
+            </span>
+            <span className="min-w-0 truncate text-sm font-medium">
+              {profile?.display_name ?? 'Student'}
+            </span>
+          </Link>
           <Button
             type="button"
             variant="ghost"
