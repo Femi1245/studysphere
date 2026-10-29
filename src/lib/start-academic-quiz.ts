@@ -30,8 +30,39 @@ export function shuffleItems<T>(arr: T[]): T[] {
   return a
 }
 
+function localFallbackQuestions(
+  subject: string,
+  need: number,
+  difficulty: string,
+  topicFilter?: string,
+): GenQuestion[] {
+  const label = [subject, topicFilter].filter(Boolean).join(' — ') || 'General studies'
+  const out: GenQuestion[] = []
+  for (let i = 1; i <= need; i += 1) {
+    const options = [
+      `Key idea ${i}A about ${label}`,
+      `Key idea ${i}B about ${label}`,
+      `Key idea ${i}C about ${label}`,
+      `Key idea ${i}D about ${label}`,
+    ]
+    const correct = options[i % 4]!
+    out.push({
+      question_type: 'multiple_choice',
+      prompt: `(${difficulty}) Practice question ${i} for ${label}: which option best fits a foundational revision point?`,
+      options,
+      correct_answer: correct,
+      explanation:
+        'Local practice fallback used because question generation was unavailable. Retry later for AI questions.',
+      topic_label: topicFilter || subject,
+      bank_question_id: null,
+    })
+  }
+  return out
+}
+
 /**
  * Generate quiz questions from the academic subject label via /api/generate-quiz.
+ * Always tries to return enough questions (API fallback, then local fallback).
  */
 export async function generateQuestionsForSubject(input: {
   accessToken: string
@@ -46,6 +77,7 @@ export async function generateQuestionsForSubject(input: {
   const out: GenQuestion[] = []
   let remaining = need
   let lastError = ''
+  const diff = difficulty === 'all' ? 'medium' : difficulty
 
   while (remaining > 0) {
     const batch = Math.min(remaining, 10)
@@ -60,7 +92,7 @@ export async function generateQuestionsForSubject(input: {
         body: JSON.stringify({
           count: batch,
           course: courseLabel,
-          difficulty: difficulty === 'all' ? 'medium' : difficulty,
+          difficulty: diff,
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {
@@ -72,10 +104,6 @@ export async function generateQuestionsForSubject(input: {
       }
       if (!res.ok) {
         lastError = data.error || data.detail || `Generate failed (${res.status})`
-        if (batch > 5) {
-          remaining = Math.min(remaining, 5)
-          continue
-        }
         break
       }
       const chunk = (data.questions ?? []).map((q) => ({
@@ -98,12 +126,23 @@ export async function generateQuestionsForSubject(input: {
 
   // Deduplicate
   const seen = new Set<string>()
-  const unique = out.filter((q) => {
+  let unique = out.filter((q) => {
     const k = fingerprintPrompt(q.prompt || '')
     if (!k || seen.has(k)) return false
     seen.add(k)
     return true
   })
+
+  if (unique.length < need) {
+    const fill = localFallbackQuestions(subject, need - unique.length, diff, topicFilter)
+    for (const q of fill) {
+      const k = fingerprintPrompt(q.prompt)
+      if (seen.has(k)) continue
+      seen.add(k)
+      unique.push(q)
+    }
+    if (!lastError) lastError = 'Filled remaining questions with local practice fallback'
+  }
 
   return {
     questions: unique.slice(0, need),

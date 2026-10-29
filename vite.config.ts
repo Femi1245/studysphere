@@ -4,10 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
-import {
-  buildFallbackQuizQuestions,
-  parseGeneratedQuizQuestions,
-} from './api/lib/parse-quiz-questions.ts'
+import { generateQuizQuestionsCore } from './api/lib/generate-quiz-core.ts'
+import { buildFallbackQuizQuestions } from './api/lib/parse-quiz-questions.ts'
 import { createUserClient, runGradeQuiz } from './api/lib/run-grade-quiz.ts'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
@@ -163,117 +161,57 @@ function aiTutorDevPlugin(env: Record<string, string>): Plugin {
         req.on('data', (c: Buffer) => chunks.push(c))
         req.on('end', () => {
           void (async () => {
+            const respond = (status: number, payload: unknown) => {
+              res.statusCode = status
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify(payload))
+            }
+            let count = 10
+            let course = 'General studies'
+            let difficulty = 'medium'
             try {
-              const apiKey = env.GROQ_API_KEY
-              if (!apiKey) {
-                res.statusCode = 503
-                res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: 'GROQ_API_KEY not configured' }))
-                return
-              }
-              if (!req.headers.authorization?.startsWith('Bearer ')) {
-                res.statusCode = 401
-                res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: 'Sign in required' }))
-                return
-              }
               const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
                 count?: number
                 course?: string
                 difficulty?: string
               }
-              const count = Math.min(Math.max(Number(body.count) || 0, 1), 40)
-              const course = String(body.course || 'General studies').slice(0, 200)
-              const difficulty = body.difficulty || 'medium'
-              const primary = env.GROQ_MODEL || 'llama-3.1-8b-instant'
-              const models =
-                primary === 'llama-3.1-8b-instant'
-                  ? [primary]
-                  : [primary, 'llama-3.1-8b-instant']
+              count = Math.min(Math.max(Number(body.count) || 0, 1), 40)
+              course = String(body.course || 'General studies').slice(0, 200)
+              difficulty = body.difficulty || 'medium'
 
-              let questions: ReturnType<typeof parseGeneratedQuizQuestions> | null = null
-              let lastError = ''
-              let usedModel = primary
-
-              for (const model of models) {
-                for (const tryCount of [count, Math.min(count, 10), Math.min(count, 5)]) {
-                  try {
-                    const prompt = `Create ${tryCount} exam practice questions for Nigerian students on: "${course}" (${difficulty} difficulty).
-Return ONLY valid JSON with this exact shape:
-{"questions":[{"question_type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correct_answer":"exact option text","explanation":"..."}]}
-Rules: prefer multiple_choice with 4 options; correct_answer must match one option; no markdown.`
-                    const aiRes = await fetch(
-                      'https://api.groq.com/openai/v1/chat/completions',
-                      {
-                        method: 'POST',
-                        headers: {
-                          Authorization: `Bearer ${apiKey}`,
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          model,
-                          messages: [
-                            {
-                              role: 'system',
-                              content: 'You are a quiz generator. Respond with JSON only.',
-                            },
-                            { role: 'user', content: prompt },
-                          ],
-                          temperature: 0.3,
-                          response_format: { type: 'json_object' },
-                        }),
-                      },
-                    )
-                    if (!aiRes.ok) {
-                      lastError = `AI provider error: ${(await aiRes.text()).slice(0, 180)}`
-                      continue
-                    }
-                    const completion = (await aiRes.json()) as {
-                      choices?: Array<{ message?: { content?: string } }>
-                    }
-                    const text = completion.choices?.[0]?.message?.content?.trim() ?? '{}'
-                    questions = parseGeneratedQuizQuestions(text, tryCount)
-                    usedModel = model
-                    break
-                  } catch (e) {
-                    lastError = e instanceof Error ? e.message : 'Generate failed'
-                  }
-                }
-                if (questions?.length) break
-              }
-
-              if (!questions?.length) {
-                questions = buildFallbackQuizQuestions(course, count, difficulty)
-                res.statusCode = 200
-                res.setHeader('Content-Type', 'application/json')
-                res.end(
-                  JSON.stringify({
-                    questions,
-                    ai_generated: false,
-                    fallback: true,
-                    warning: lastError || 'Could not parse generated questions',
-                  }),
-                )
+              if (!req.headers.authorization?.startsWith('Bearer ')) {
+                respond(401, { error: 'Sign in required' })
                 return
               }
 
-              res.statusCode = 200
-              res.setHeader('Content-Type', 'application/json')
-              res.end(
-                JSON.stringify({
-                  questions: questions.slice(0, count),
-                  ai_generated: true,
-                  model: usedModel,
-                }),
-              )
+              const apiKey = env.GROQ_API_KEY
+              if (!apiKey) {
+                respond(200, {
+                  questions: buildFallbackQuizQuestions(course, count, difficulty),
+                  ai_generated: false,
+                  fallback: true,
+                  warning:
+                    'GROQ_API_KEY missing in .env.local — using practice fallback questions',
+                })
+                return
+              }
+
+              const result = await generateQuizQuestionsCore({
+                apiKey,
+                model: env.GROQ_MODEL || 'llama-3.1-8b-instant',
+                count,
+                course,
+                difficulty,
+              })
+              respond(200, result)
             } catch (e) {
-              res.statusCode = 500
-              res.setHeader('Content-Type', 'application/json')
-              res.end(
-                JSON.stringify({
-                  error: e instanceof Error ? e.message : 'Generate failed',
-                }),
-              )
+              // Never block exam start — always return usable questions
+              respond(200, {
+                questions: buildFallbackQuizQuestions(course, count, difficulty),
+                ai_generated: false,
+                fallback: true,
+                warning: e instanceof Error ? e.message : 'Generate failed',
+              })
             }
           })()
         })
