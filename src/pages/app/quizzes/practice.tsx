@@ -31,6 +31,7 @@ import {
   generateQuestionsForSubject,
   parseQuestionOptions,
   shuffleItems,
+  type GenQuestion,
 } from '@/lib/start-academic-quiz'
 import { trySupabase } from '@/lib/supabase/client'
 import type {
@@ -152,7 +153,7 @@ export function QuizPracticePage() {
       const subjectForQuestions =
         academicLabel || (course ? `${course.code} — ${course.title}` : 'Your academic subject')
 
-      let picked = shuffleItems(pool)
+      let picked: GenQuestion[] = shuffleItems(pool)
         .slice(0, count)
         .map((q) => ({
           question_type: q.question_type,
@@ -160,7 +161,7 @@ export function QuizPracticePage() {
           options: parseQuestionOptions(q.options),
           correct_answer: q.correct_answer,
           explanation: q.explanation,
-          topic_label: q.topic_label,
+          topic_label: q.topic_label ?? null,
           bank_question_id: q.id,
         }))
 
@@ -177,7 +178,11 @@ export function QuizPracticePage() {
           const k = fingerprintPrompt(q.prompt)
           if (!k || seenFp.has(k)) continue
           seenFp.add(k)
-          picked.push(q)
+          picked.push({
+            ...q,
+            topic_label: q.topic_label ?? null,
+            bank_question_id: q.bank_question_id ?? null,
+          })
           if (picked.length >= count) break
         }
         if (picked.length < count && genErr) {
