@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/toast'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
 import { fetchDefaultPassMark } from '@/lib/academic'
+import { loadAcademicQuizContext } from '@/lib/academic-sync'
 import {
   durationMinutesForCount,
   MIN_QUIZ_QUESTIONS,
@@ -74,6 +75,7 @@ export function QuizPracticePage() {
   const [enrolments, setEnrolments] = useState<
     (StudentCourseEnrolment & { catalogue_courses: CatalogueCourse | null })[]
   >([])
+  const [academicLabel, setAcademicLabel] = useState('')
   const [courseId, setCourseId] = useState(params.get('course') ?? '')
   const [banks, setBanks] = useState<QuestionBank[]>([])
   const [bankId, setBankId] = useState(params.get('bank') ?? '')
@@ -88,12 +90,9 @@ export function QuizPracticePage() {
   const loadEnrolments = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
-    const { data } = await supabase
-      .from('student_course_enrolments')
-      .select('*, catalogue_courses(*)')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-    setEnrolments((data as typeof enrolments) ?? [])
+    const ctx = await loadAcademicQuizContext(supabase, user.id)
+    setEnrolments(ctx.enrolments)
+    setAcademicLabel(ctx.subjectLabel)
     const def = await fetchDefaultPassMark(supabase)
     setPassMark(String(def))
     setLoading(false)
@@ -195,7 +194,8 @@ export function QuizPracticePage() {
         enrolments.find((e) => e.catalogue_course_id === courseId)?.catalogue_courses
       const courseLabel = course
         ? `${course.code} — ${course.title}`
-        : 'Selected course'
+        : academicLabel || 'Selected course'
+      const generateLabel = [academicLabel, courseLabel].filter(Boolean).join(' · ') || courseLabel
 
       let picked: GenQuestion[] = shuffle(pool)
         .slice(0, count)
@@ -210,7 +210,7 @@ export function QuizPracticePage() {
         }))
 
       if (picked.length < count) {
-        const extra = await generateExtra(count - picked.length, courseLabel)
+        const extra = await generateExtra(count - picked.length, generateLabel)
         picked = [...picked, ...extra].slice(0, count)
       }
 
@@ -321,14 +321,19 @@ export function QuizPracticePage() {
       </div>
 
       <p className="text-sm text-ink-muted">
-        Questions are provided for your enrolled course. Choose how many to answer —
+        Questions are provided from your academic profile courses. Choose how many to answer —
         time is set automatically. Leaving mid-quiz fails the attempt.
       </p>
+      {academicLabel ? (
+        <p className="text-sm text-ink">
+          Academic focus: <span className="font-medium">{academicLabel}</span>
+        </p>
+      ) : null}
 
       {enrolments.length === 0 ? (
         <EmptyState
-          title="Enrol in a course first"
-          description="Assessments are based on your academic courses."
+          title="No courses linked yet"
+          description="Save your academic profile so quizzes can load questions for your programme / course of study."
           action={
             <Button asChild size="sm">
               <Link to="/app/academic-profile">Set academic profile</Link>

@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/auth-context'
 import { fetchCatalogueCourses, fetchEducationLevels } from '@/lib/academic'
+import { syncEnrolmentsFromAcademicProfile } from '@/lib/academic-sync'
 import { submitCatalogueRequest } from '@/lib/catalogue-request'
 import { trySupabase } from '@/lib/supabase/client'
 import type { CatalogueCourse, EducationLevelRow, StudentCourseEnrolment } from '@/types/database'
@@ -40,6 +41,7 @@ export function CoursesLibraryPage() {
   const load = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
+    await syncEnrolmentsFromAcademicProfile(supabase, user.id)
     const [enr, lv] = await Promise.all([
       supabase
         .from('student_course_enrolments')

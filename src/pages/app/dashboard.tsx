@@ -39,6 +39,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/contexts/auth-context'
+import { syncEnrolmentsFromAcademicProfile } from '@/lib/academic-sync'
 import { trySupabase } from '@/lib/supabase/client'
 import { cn, formatDuration } from '@/lib/utils'
 import type {
@@ -94,6 +95,7 @@ export function DashboardPage() {
 
     const load = async () => {
       setLoading(true)
+      await syncEnrolmentsFromAcademicProfile(supabase, user.id)
       const [
         tasksRes,
         subjectsRes,

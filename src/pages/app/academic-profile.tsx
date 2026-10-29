@@ -27,6 +27,7 @@ import {
   fetchProgrammes,
 } from '@/lib/academic'
 import { logActivity } from '@/lib/activity'
+import { resolveCoursesForProfile } from '@/lib/academic-sync'
 import {
   institutionTypeForEducationCode,
   isSecondaryEducationCode,
@@ -345,23 +346,50 @@ export function AcademicProfilePage() {
       })
       .eq('id', user.id)
 
+    // Prefer manually checked courses; otherwise auto-match from programme / course of study
+    let courseIds = [...selectedCourses]
+    if (courseIds.length === 0) {
+      const matched = await resolveCoursesForProfile(supabase, {
+        user_id: user.id,
+        country_id: countryId,
+        institution_id: useCustomInstitution ? null : institutionId || null,
+        education_level_id: educationLevelId,
+        programme_id: isSecondary ? null : programmeId || null,
+        department_id: isSecondary ? null : departmentId || null,
+        class_level_id: classLevelId || null,
+        academic_session_id: sessionId || null,
+        semester_term: semesterTerm || null,
+        course_of_study: courseOfStudy.trim() || null,
+        custom_institution_name: useCustomInstitution ? customInstitution.trim() || null : null,
+        custom_programme_name: null,
+        created_at: '',
+        updated_at: '',
+      })
+      courseIds = matched.slice(0, 12).map((c) => c.id)
+      setSelectedCourses(courseIds)
+    }
+
     const existing = new Set(enrolments.map((e) => e.catalogue_course_id))
-    for (const cid of selectedCourses) {
+    for (const cid of courseIds) {
       if (!existing.has(cid)) {
-        await supabase.from('student_course_enrolments').insert({
-          user_id: user.id,
-          catalogue_course_id: cid,
-          status: 'active',
-        })
+        await supabase.from('student_course_enrolments').upsert(
+          {
+            user_id: user.id,
+            catalogue_course_id: cid,
+            status: 'active',
+          },
+          { onConflict: 'user_id,catalogue_course_id' },
+        )
         void logActivity(supabase, {
           userId: user.id,
           eventType: 'course_enrolled',
           catalogueCourseId: cid,
+          metadata: { source: 'academic-profile-auto' },
         })
       }
     }
     for (const en of enrolments) {
-      if (!selectedCourses.includes(en.catalogue_course_id)) {
+      if (!courseIds.includes(en.catalogue_course_id)) {
         await supabase.from('student_course_enrolments').delete().eq('id', en.id)
       }
     }
@@ -369,11 +397,18 @@ export function AcademicProfilePage() {
     void logActivity(supabase, {
       userId: user.id,
       eventType: 'profile_updated',
-      metadata: { source: 'academic-profile' },
+      metadata: { source: 'academic-profile', enrolled: courseIds.length },
     })
     await refreshProfile()
     setSaving(false)
-    toast({ title: 'Academic profile saved', kind: 'success' })
+    toast({
+      title: 'Academic profile saved',
+      description:
+        courseIds.length > 0
+          ? `${courseIds.length} course(s) linked for quizzes and exams.`
+          : 'Profile saved. Add courses or re-save after catalogue courses load.',
+      kind: 'success',
+    })
     await load()
   }
 

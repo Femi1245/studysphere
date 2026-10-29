@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/toast'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
 import { fetchDefaultPassMark } from '@/lib/academic'
+import { loadAcademicQuizContext } from '@/lib/academic-sync'
 import {
   durationMinutesForCount,
   MIN_QUIZ_QUESTIONS,
@@ -80,6 +81,7 @@ export function ExaminationCentrePage() {
   const [enrolments, setEnrolments] = useState<
     (StudentCourseEnrolment & { catalogue_courses: CatalogueCourse | null })[]
   >([])
+  const [academicLabel, setAcademicLabel] = useState('')
   const [history, setHistory] = useState<(QuizAttempt & { quizzes?: { title: string } | null })[]>(
     [],
   )
@@ -106,12 +108,8 @@ export function ExaminationCentrePage() {
   const load = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
-    const [enr, att] = await Promise.all([
-      supabase
-        .from('student_course_enrolments')
-        .select('*, catalogue_courses(*)')
-        .eq('user_id', user.id)
-        .eq('status', 'active'),
+    const [ctx, att] = await Promise.all([
+      loadAcademicQuizContext(supabase, user.id),
       supabase
         .from('quiz_attempts')
         .select('*, quizzes(title)')
@@ -120,7 +118,8 @@ export function ExaminationCentrePage() {
         .order('submitted_at', { ascending: false })
         .limit(15),
     ])
-    setEnrolments((enr.data as typeof enrolments) ?? [])
+    setEnrolments(ctx.enrolments)
+    setAcademicLabel(ctx.subjectLabel)
     setHistory((att.data as typeof history) ?? [])
     setPassMark(String(await fetchDefaultPassMark(supabase)))
     setLoading(false)
@@ -307,10 +306,12 @@ export function ExaminationCentrePage() {
 
       const course =
         enrolments.find((e) => e.catalogue_course_id === courseId)?.catalogue_courses
-      const courseLabel = course ? `${course.code} — ${course.title}` : 'Course'
+      const courseLabel =
+        course ? `${course.code} — ${course.title}` : academicLabel || 'Course'
+      const generateLabel = [academicLabel, courseLabel].filter(Boolean).join(' · ') || courseLabel
 
       if (picked.length < count) {
-        const extra = await generateExtra(count - picked.length, courseLabel)
+        const extra = await generateExtra(count - picked.length, generateLabel)
         for (const q of extra) {
           const k = fp(q.prompt)
           if (seenFp.has(k)) continue
@@ -434,11 +435,17 @@ export function ExaminationCentrePage() {
           Configure subject/course practice or timed assessment. Answers are graded on the server.
           Completed attempts are kept forever.
         </p>
+        {academicLabel ? (
+          <p className="mt-2 text-sm text-ink">
+            Questions follow your academic setup: <span className="font-medium">{academicLabel}</span>
+          </p>
+        ) : null}
       </div>
 
       {enrolments.length === 0 ? (
         <EmptyState
-          title="Enrol in a course first"
+          title="No courses linked yet"
+          description="Save your academic profile (programme / course of study) so we can load matching courses and questions."
           action={
             <Button asChild size="sm">
               <Link to="/app/academic-profile">Academic profile</Link>
