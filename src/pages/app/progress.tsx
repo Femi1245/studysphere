@@ -17,6 +17,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/contexts/auth-context'
+import { loadStudyBooksForUser, type StudyBookWithProgress } from '@/lib/study-curriculum'
 import { trySupabase } from '@/lib/supabase/client'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -46,12 +47,13 @@ export function ProgressPage() {
   const [allAttempts, setAllAttempts] = useState<QuizAttempt[]>([])
   const [wrongTopics, setWrongTopics] = useState<string[]>([])
   const [recommendations, setRecommendations] = useState<StudentRecommendation[]>([])
+  const [studyBooks, setStudyBooks] = useState<StudyBookWithProgress[]>([])
 
   const load = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
     const since = subDays(new Date(), range).toISOString()
-    const [sess, task, att, top, sub, rev, qz, allAtt, rec] = await Promise.all([
+    const [sess, task, att, top, sub, rev, qz, allAtt, rec, books] = await Promise.all([
       supabase.from('study_sessions').select('*').eq('user_id', user.id).gte('started_at', since),
       supabase.from('study_tasks').select('*').eq('user_id', user.id).eq('status', 'completed').gte('completed_at', since),
       supabase.from('quiz_attempts').select('*').eq('user_id', user.id).gte('created_at', since),
@@ -61,6 +63,7 @@ export function ProgressPage() {
       supabase.from('quizzes').select('*').eq('user_id', user.id),
       supabase.from('quiz_attempts').select('*').eq('user_id', user.id).not('submitted_at', 'is', null),
       supabase.from('student_recommendations').select('*').eq('user_id', user.id).eq('dismissed', false).order('created_at', { ascending: false }),
+      loadStudyBooksForUser(supabase, user.id).catch(() => [] as StudyBookWithProgress[]),
     ])
     setSessions((sess.data as StudySession[]) ?? [])
     setTasks((task.data as StudyTask[]) ?? [])
@@ -70,6 +73,7 @@ export function ProgressPage() {
     setReviewCount(rev.count ?? 0)
     setQuizzes((qz.data as Quiz[]) ?? [])
     setAllAttempts((allAtt.data as QuizAttempt[]) ?? [])
+    setStudyBooks(books)
     let recs = (rec.data as StudentRecommendation[]) ?? []
 
     const recentFails = (allAtt.data as QuizAttempt[] ?? []).filter((a) => {
@@ -174,6 +178,19 @@ export function ProgressPage() {
     return { total, avg, highest, passed, failed, passRate }
   }, [allAttempts, quizzes])
 
+  const bookTrack = useMemo(() => {
+    const total = studyBooks.length
+    const completed = studyBooks.filter((b) => b.progress?.status === 'completed').length
+    const inProgress = studyBooks.filter((b) => b.progress?.status === 'in_progress').length
+    const theoryDone = studyBooks.filter(
+      (b) => b.book_kind === 'theory' && b.progress?.status === 'completed',
+    ).length
+    const practicalDone = studyBooks.filter(
+      (b) => b.book_kind === 'practical' && b.progress?.status === 'completed',
+    ).length
+    return { total, completed, inProgress, theoryDone, practicalDone }
+  }, [studyBooks])
+
   if (!supabase) return <SupabaseSetupBanner />
   if (loading) return <Skeleton className="h-96 rounded-2xl" />
 
@@ -190,6 +207,63 @@ export function ProgressPage() {
           <TabsTrigger value="14">Last 14 days</TabsTrigger>
         </TabsList>
       </Tabs>
+
+      <Card className="rounded-2xl">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-lg">Study books track record</CardTitle>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/app/study-books">Open study books</Link>
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {bookTrack.total === 0 ? (
+            <EmptyState
+              title="No books linked yet"
+              description="Save your academic profile and apply the curriculum migration to load theory and practical books."
+            />
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div>
+                  <p className="text-xs text-ink-muted">Listed</p>
+                  <p className="text-xl font-semibold">{bookTrack.total}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-muted">In progress</p>
+                  <p className="text-xl font-semibold">{bookTrack.inProgress}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-muted">Completed</p>
+                  <p className="text-xl font-semibold">{bookTrack.completed}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-muted">Theory / practical done</p>
+                  <p className="text-xl font-semibold">
+                    {bookTrack.theoryDone}/{bookTrack.practicalDone}
+                  </p>
+                </div>
+              </div>
+              <ul className="space-y-2 text-sm">
+                {studyBooks.slice(0, 8).map((b) => (
+                  <li
+                    key={b.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2"
+                  >
+                    <span>
+                      <span className="font-medium">{b.title}</span>
+                      <span className="text-ink-muted">
+                        {' '}
+                        · {b.book_kind} · {b.progress?.status?.replace('_', ' ') ?? 'not started'} ·{' '}
+                        {b.progress?.progress_percent ?? 0}%
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="rounded-2xl">
         <CardHeader>

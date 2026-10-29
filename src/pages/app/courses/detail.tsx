@@ -17,6 +17,11 @@ import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/auth-context'
 import { logActivity } from '@/lib/activity'
 import { submitCatalogueRequest } from '@/lib/catalogue-request'
+import {
+  loadStudyBooksForUser,
+  upsertBookProgress,
+  type StudyBookWithProgress,
+} from '@/lib/study-curriculum'
 import { trySupabase } from '@/lib/supabase/client'
 import type {
   CatalogueCourse,
@@ -49,11 +54,12 @@ export function CourseDetailPage() {
   const [progress, setProgress] = useState<ReadingProgress[]>([])
   const [banks, setBanks] = useState<QuestionBank[]>([])
   const [typeFilter, setTypeFilter] = useState<string>('all')
+  const [studyBooks, setStudyBooks] = useState<StudyBookWithProgress[]>([])
 
   const load = useCallback(async () => {
     if (!supabase || !user || !id) return
     setLoading(true)
-    const [cRes, mRes, bRes, bmRes, progRes] = await Promise.all([
+    const [cRes, mRes, bRes, bmRes, progRes, allBooks] = await Promise.all([
       supabase.from('catalogue_courses').select('*').eq('id', id).maybeSingle(),
       supabase
         .from('learning_materials')
@@ -68,12 +74,14 @@ export function CourseDetailPage() {
         .eq('is_published', true),
       supabase.from('material_bookmarks').select('material_id').eq('user_id', user.id),
       supabase.from('reading_progress').select('*').eq('user_id', user.id),
+      loadStudyBooksForUser(supabase, user.id).catch(() => [] as StudyBookWithProgress[]),
     ])
     setCourse((cRes.data as CatalogueCourse | null) ?? null)
     setMaterials((mRes.data as LearningMaterial[]) ?? [])
     setBanks((bRes.data as QuestionBank[]) ?? [])
     setBookmarks(new Set((bmRes.data ?? []).map((r: { material_id: string }) => r.material_id)))
     setProgress((progRes.data as ReadingProgress[]) ?? [])
+    setStudyBooks(allBooks.filter((b) => b.catalogue_course_id === id))
     setLoading(false)
   }, [supabase, user, id])
 
@@ -157,6 +165,71 @@ export function CourseDetailPage() {
         </h2>
       </div>
       {course.description ? <p className="text-sm text-ink-muted">{course.description}</p> : null}
+
+      {studyBooks.length > 0 ? (
+        <Card className="rounded-2xl">
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-lg">Theory & practical books</CardTitle>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/app/study-books">Track all books</Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {studyBooks.map((b) => {
+                const status = b.progress?.status ?? 'not_started'
+                const percent = b.progress?.progress_percent ?? 0
+                return (
+                  <li
+                    key={b.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-sm"
+                  >
+                    <div>
+                      <p className="font-medium">{b.title}</p>
+                      <p className="text-ink-muted">
+                        {b.book_kind === 'theory' ? 'Theory' : 'Practical'}
+                        {b.author ? ` · ${b.author}` : ''} · {status.replace('_', ' ')} · {percent}%
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (!supabase || !user) return
+                        const next =
+                          status === 'not_started'
+                            ? ('in_progress' as const)
+                            : status === 'in_progress'
+                              ? ('completed' as const)
+                              : ('not_started' as const)
+                        void upsertBookProgress(supabase, user.id, b.id, {
+                          status: next,
+                          progress_percent:
+                            next === 'completed' ? 100 : next === 'in_progress' ? 25 : 0,
+                        })
+                          .then(() => load())
+                          .catch((e) =>
+                            toast({
+                              title: 'Progress update failed',
+                              description: e instanceof Error ? e.message : 'Unknown error',
+                              kind: 'error',
+                            }),
+                          )
+                      }}
+                    >
+                      {status === 'not_started'
+                        ? 'Start'
+                        : status === 'in_progress'
+                          ? 'Mark complete'
+                          : 'Reset'}
+                    </Button>
+                  </li>
+                )
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {nextTopic ? (
         <Card className="rounded-2xl border-primary-100 bg-primary-50/50 dark:bg-primary-900/20">

@@ -28,6 +28,7 @@ import {
 } from '@/lib/academic'
 import { logActivity } from '@/lib/activity'
 import { resolveCoursesForProfile } from '@/lib/academic-sync'
+import { syncSubjectsFromAcademicProfile } from '@/lib/study-curriculum'
 import {
   institutionTypeForEducationCode,
   isSecondaryEducationCode,
@@ -399,13 +400,16 @@ export function AcademicProfilePage() {
       eventType: 'profile_updated',
       metadata: { source: 'academic-profile', enrolled: courseIds.length },
     })
+
+    const syncedSubjects = await syncSubjectsFromAcademicProfile(supabase, user.id)
+
     await refreshProfile()
     setSaving(false)
     toast({
       title: 'Academic profile saved',
       description:
         courseIds.length > 0
-          ? `${courseIds.length} course(s) linked for quizzes and exams.`
+          ? `${courseIds.length} course(s) and ${syncedSubjects.length} subject(s) linked. Open Study books for theory & practical texts.`
           : 'Profile saved. Add courses or re-save after catalogue courses load.',
       kind: 'success',
     })

@@ -30,6 +30,7 @@ import { QuizTakePage } from '@/pages/app/quizzes/take'
 import { QuizzesPage } from '@/pages/app/quizzes'
 import { SettingsPage } from '@/pages/app/settings'
 import { SubjectDetailPage } from '@/pages/app/subjects/detail'
+import { StudyBooksPage } from '@/pages/app/study-books'
 import { SubjectsPage } from '@/pages/app/subjects'
 import { TimerPage } from '@/pages/app/timer'
 import { AboutPage } from '@/pages/public/about'
@@ -64,6 +65,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="subjects" element={<SubjectsPage />} />
           <Route path="subjects/:id" element={<SubjectDetailPage />} />
+          <Route path="study-books" element={<StudyBooksPage />} />
           <Route path="planner" element={<PlannerPage />} />
           <Route path="notes" element={<NotesPage />} />
           <Route path="notes/new" element={<NoteEditorPage />} />

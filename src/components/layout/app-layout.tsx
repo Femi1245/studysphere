@@ -1,6 +1,7 @@
 import {
   Bell,
   Activity,
+  BookMarked,
   BookOpen,
   Bot,
   CalendarDays,
@@ -35,6 +36,7 @@ type NavItem = {
 const desktopNav: NavItem[] = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/app/subjects', label: 'My Subjects', icon: BookOpen },
+  { to: '/app/study-books', label: 'Study Books', icon: BookMarked },
   { to: '/app/courses', label: 'Courses', icon: Library },
   { to: '/app/planner', label: 'Study Planner', icon: CalendarDays },
   { to: '/app/notes', label: 'Notes', icon: FileText },
@@ -59,6 +61,7 @@ const mobileNav: NavItem[] = [
 const pageTitles: Record<string, string> = {
   '/app': 'Dashboard',
   '/app/subjects': 'My Subjects',
+  '/app/study-books': 'Study Books',
   '/app/courses': 'Course Library',
   '/app/academic-profile': 'Academic Profile',
   '/app/activity': 'Activity',

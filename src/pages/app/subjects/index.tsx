@@ -1,4 +1,4 @@
-import { BookOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { BookOpen, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { SupabaseSetupBanner } from '@/components/app/supabase-setup-banner'
@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/toast'
 import { subjectColors } from '@/config/brand'
 import { useAuth } from '@/contexts/auth-context'
+import { syncSubjectsFromAcademicProfile } from '@/lib/study-curriculum'
 import { trySupabase } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import type { Subject } from '@/types/database'
@@ -53,10 +54,21 @@ export function SubjectsPage() {
   const [editing, setEditing] = useState<Subject | null>(null)
   const [form, setForm] = useState<SubjectForm>(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [syncing, setSyncing] = useState(false)
 
   const load = useCallback(async () => {
     if (!supabase || !user) return
     setLoading(true)
+    try {
+      const synced = await syncSubjectsFromAcademicProfile(supabase, user.id)
+      if (synced.length) {
+        setSubjects(synced)
+        setLoading(false)
+        return
+      }
+    } catch {
+      // fall through to plain load
+    }
     const { data, error } = await supabase
       .from('subjects')
       .select('*')
@@ -66,6 +78,28 @@ export function SubjectsPage() {
     setSubjects((data as Subject[]) ?? [])
     setLoading(false)
   }, [supabase, user, toast])
+
+  const syncFromProfile = async () => {
+    if (!supabase || !user) return
+    setSyncing(true)
+    try {
+      const synced = await syncSubjectsFromAcademicProfile(supabase, user.id)
+      setSubjects(synced)
+      toast({
+        title: 'Subjects updated from academic profile',
+        description: `${synced.length} subject(s) available.`,
+        kind: 'success',
+      })
+    } catch (e) {
+      toast({
+        title: 'Sync failed',
+        description: e instanceof Error ? e.message : 'Unknown error',
+        kind: 'error',
+      })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -138,11 +172,25 @@ export function SubjectsPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          New subject
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to="/app/study-books">Theory & practical books</Link>
+          </Button>
+          <Button variant="outline" disabled={syncing} onClick={() => void syncFromProfile()}>
+            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+            Sync from profile
+          </Button>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            New subject
+          </Button>
+        </div>
       </div>
+
+      <p className="text-sm text-ink-muted">
+        Subjects related to your academic programme / course of study are added automatically when
+        you save your academic profile or tap Sync.
+      </p>
 
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -154,10 +202,15 @@ export function SubjectsPage() {
         <EmptyState
           icon={BookOpen}
           title={search ? 'No matches' : 'No subjects yet'}
-          description="Organize your courses and topics by creating a subject."
+          description="Save your academic profile to load related subjects, or create one manually."
           action={
             !search ? (
-              <Button onClick={openCreate}>Create subject</Button>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button asChild variant="outline">
+                  <Link to="/app/academic-profile">Academic profile</Link>
+                </Button>
+                <Button onClick={openCreate}>Create subject</Button>
+              </div>
             ) : undefined
           }
         />

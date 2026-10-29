@@ -394,6 +394,54 @@ export interface StudentCourseEnrolment {
   enrolled_at: string
 }
 
+export type StudyBookKind = 'theory' | 'practical'
+export type StudyBookStatus = 'not_started' | 'in_progress' | 'completed'
+
+export interface CurriculumSubject {
+  id: string
+  programme_id: string | null
+  education_level_id: string | null
+  catalogue_course_id: string | null
+  name: string
+  code: string | null
+  description: string | null
+  order_index: number
+  is_published: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface RecommendedStudyBook {
+  id: string
+  catalogue_course_id: string | null
+  programme_id: string | null
+  curriculum_subject_id: string | null
+  subject_label: string
+  title: string
+  author: string | null
+  edition: string | null
+  book_kind: StudyBookKind
+  description: string | null
+  is_published: boolean
+  order_index: number
+  created_at: string
+  updated_at: string
+}
+
+export interface StudentBookProgress {
+  id: string
+  user_id: string
+  book_id: string
+  status: StudyBookStatus
+  progress_percent: number
+  notes: string | null
+  started_at: string | null
+  completed_at: string | null
+  last_studied_at: string
+  created_at: string
+  updated_at: string
+}
+
 export interface CatalogueRequest {
   id: string
   user_id: string
