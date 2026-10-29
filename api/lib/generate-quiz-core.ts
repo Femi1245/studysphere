@@ -2,7 +2,7 @@ import {
   buildFallbackQuizQuestions,
   parseGeneratedQuizQuestions,
   type ParsedQuizQuestion,
-} from './parse-quiz-questions'
+} from './parse-quiz-questions.js'
 
 const FALLBACK_MODELS = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'] as const
 
