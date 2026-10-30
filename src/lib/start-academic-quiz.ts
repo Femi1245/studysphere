@@ -44,8 +44,6 @@ export async function generateQuestionsForSubject(input: {
   const { accessToken, subject, need, difficulty, topicFilter } = input
   if (need <= 0) return { questions: [] }
 
-  const out: GenQuestion[] = []
-  let remaining = need
   let lastError = ''
   const diff = difficulty === 'all' ? 'medium' : difficulty
 

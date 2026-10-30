@@ -173,10 +173,21 @@ Prefer multiple_choice with 4 options. correct_answer must match one option. No 
           choices?: Array<{ message?: { content?: string } }>
         }
         const text = completion.choices?.[0]?.message?.content?.trim() ?? ''
-        const questions = parseQuestions(text, tryCount)
+        let questions = parseQuestions(text, tryCount)
         if (!questions.length) {
           lastError = 'Parsed zero questions'
           continue
+        }
+
+        // Pad to requested count so clients requesting 30 don't stall
+        if (questions.length < count) {
+          questions = [
+            ...questions,
+            ...buildFallback(course, count - questions.length, difficulty).map((q, idx) => ({
+              ...q,
+              prompt: `${q.prompt} [${questions.length + idx + 1}]`,
+            })),
+          ]
         }
 
         return res.status(200).json({
