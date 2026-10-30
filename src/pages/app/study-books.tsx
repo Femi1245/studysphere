@@ -232,7 +232,7 @@ export function StudyBooksPage() {
         <EmptyState
           icon={BookMarked}
           title="No study books yet"
-          description="Save your academic profile (programme / course of study), then apply the curriculum migration in Supabase so theory and practical books can load."
+          description="Save your academic profile with a programme or course of study. StudySphere will load matching theory and practical books for that subject."
           action={
             <Button asChild size="sm">
               <Link to="/app/academic-profile">Open academic profile</Link>

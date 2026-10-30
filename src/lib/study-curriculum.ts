@@ -2,6 +2,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { logActivity } from '@/lib/activity'
 import { subjectColors } from '@/config/brand'
 import { syncEnrolmentsFromAcademicProfile } from '@/lib/academic-sync'
+import {
+  buildFallbackStudyBooks,
+  isFallbackBookId,
+  readLocalBookProgress,
+  scoreBookRelevance,
+  writeLocalBookProgress,
+} from '@/lib/study-book-packs'
 import type {
   CatalogueCourse,
   CurriculumSubject,
@@ -71,6 +78,16 @@ const FALLBACK_PACKS: { match: RegExp; subjects: { name: string; code?: string; 
       subjects: [
         { name: 'Legal Method', code: 'LAW101' },
         { name: 'Nigerian Legal System', code: 'LAW102' },
+      ],
+    },
+    {
+      match: /english|literary|literature/i,
+      subjects: [
+        { name: 'Introduction to Literary Studies', code: 'ENG101' },
+        { name: 'English Language Skills', code: 'ENG102' },
+        { name: 'African Literature', code: 'ENG201' },
+        { name: 'Drama and Poetry', code: 'ENG202' },
+        { name: 'Prose Fiction', code: 'ENG203' },
       ],
     },
   ]
@@ -237,15 +254,42 @@ export async function loadStudyBooksForUser(
     supabase.from('student_academic_profiles').select('*').eq('user_id', userId).maybeSingle(),
     supabase
       .from('student_course_enrolments')
-      .select('catalogue_course_id')
+      .select('catalogue_course_id, catalogue_courses(id, code, title)')
       .eq('user_id', userId)
       .eq('status', 'active'),
   ])
 
+  const p = profile as StudentAcademicProfile | null
   const courseIds = [...new Set((enrolments ?? []).map((e) => e.catalogue_course_id as string))]
-  const programmeId = (profile as StudentAcademicProfile | null)?.programme_id ?? null
+  const programmeId = p?.programme_id ?? null
+  const programmeLabel = await resolveProgrammeName(supabase, p)
+
+  const courseTitles = (enrolments ?? [])
+    .map((row) => {
+      const c = (
+        row as {
+          catalogue_courses?: { title?: string; code?: string } | { title?: string; code?: string }[] | null
+        }
+      ).catalogue_courses
+      const course = Array.isArray(c) ? c[0] : c
+      return [course?.title, course?.code].filter(Boolean).join(' ')
+    })
+    .filter(Boolean)
+
+  const needles = [programmeLabel, p?.course_of_study ?? '', ...courseTitles].filter(
+    (s) => s && s.trim().length >= 3,
+  ) as string[]
 
   let books: RecommendedStudyBook[] = []
+  const seen = new Set<string>()
+  const pushBooks = (rows: RecommendedStudyBook[] | null | undefined) => {
+    for (const b of rows ?? []) {
+      if (seen.has(b.id)) continue
+      seen.add(b.id)
+      books.push(b)
+    }
+  }
+
   if (courseIds.length) {
     const { data } = await supabase
       .from('recommended_study_books')
@@ -253,45 +297,90 @@ export async function loadStudyBooksForUser(
       .eq('is_published', true)
       .in('catalogue_course_id', courseIds)
       .order('order_index')
-    books = (data as RecommendedStudyBook[]) ?? []
+    pushBooks(data as RecommendedStudyBook[])
   }
 
-  if (books.length === 0 && programmeId) {
+  if (programmeId) {
     const { data } = await supabase
       .from('recommended_study_books')
       .select('*')
       .eq('is_published', true)
       .eq('programme_id', programmeId)
       .order('order_index')
-    books = (data as RecommendedStudyBook[]) ?? []
+    pushBooks(data as RecommendedStudyBook[])
+  }
+
+  // Name-based match: catalogue UUIDs often differ from seeded curriculum programmes
+  if (books.length === 0 && needles.length) {
+    const { data, error } = await supabase
+      .from('recommended_study_books')
+      .select('*')
+      .eq('is_published', true)
+      .order('order_index')
+      .limit(400)
+
+    if (!error && data?.length) {
+      const ranked = (data as RecommendedStudyBook[])
+        .map((b) => ({ b, score: scoreBookRelevance(b, needles) }))
+        .filter((x) => x.score >= 40)
+        .sort((a, b) => b.score - a.score || a.b.order_index - b.b.order_index)
+      pushBooks(ranked.map((x) => x.b))
+    }
+  }
+
+  // Always ensure a reading list when academic profile is set
+  if (books.length === 0 && programmeLabel) {
+    pushBooks(buildFallbackStudyBooks(programmeLabel))
   }
 
   if (books.length === 0) return []
 
-  const bookIds = books.map((b) => b.id)
+  const dbBookIds = books.filter((b) => !isFallbackBookId(b.id)).map((b) => b.id)
   const courseIdSet = [
     ...new Set(books.map((b) => b.catalogue_course_id).filter(Boolean) as string[]),
   ]
+  const localProgress = readLocalBookProgress(userId)
 
   const [{ data: progressRows }, { data: courses }] = await Promise.all([
-    supabase.from('student_book_progress').select('*').eq('user_id', userId).in('book_id', bookIds),
+    dbBookIds.length
+      ? supabase.from('student_book_progress').select('*').eq('user_id', userId).in('book_id', dbBookIds)
+      : Promise.resolve({ data: [] as StudentBookProgress[] }),
     courseIdSet.length
       ? supabase.from('catalogue_courses').select('*').in('id', courseIdSet)
       : Promise.resolve({ data: [] as CatalogueCourse[] }),
   ])
 
   const progressByBook = new Map(
-    ((progressRows as StudentBookProgress[]) ?? []).map((p) => [p.book_id, p]),
+    ((progressRows as StudentBookProgress[]) ?? []).map((row) => [row.book_id, row]),
   )
-  const courseById = new Map(
-    ((courses as CatalogueCourse[]) ?? []).map((c) => [c.id, c]),
-  )
+  const courseById = new Map(((courses as CatalogueCourse[]) ?? []).map((c) => [c.id, c]))
 
-  return books.map((b) => ({
-    ...b,
-    progress: progressByBook.get(b.id) ?? null,
-    course: b.catalogue_course_id ? courseById.get(b.catalogue_course_id) ?? null : null,
-  }))
+  return books.map((b) => {
+    let progress: StudentBookProgress | null = progressByBook.get(b.id) ?? null
+    if (!progress && isFallbackBookId(b.id)) {
+      const local = localProgress.get(b.id)
+      if (local) {
+        progress = {
+          id: `local-${b.id}`,
+          user_id: userId,
+          book_id: b.id,
+          status: local.status,
+          progress_percent: local.progress_percent,
+          notes: local.notes,
+          started_at: local.started_at,
+          completed_at: local.completed_at,
+          last_studied_at: local.last_studied_at,
+          created_at: local.last_studied_at,
+          updated_at: local.last_studied_at,
+        }
+      }
+    }
+    return {
+      ...b,
+      progress,
+      course: b.catalogue_course_id ? courseById.get(b.catalogue_course_id) ?? null : null,
+    }
+  })
 }
 
 export async function loadStudyCurriculumBundle(
@@ -343,6 +432,48 @@ export async function upsertBookProgress(
   const progress =
     patch.progress_percent ??
     (status === 'completed' ? 100 : status === 'not_started' ? 0 : undefined)
+
+  // Curriculum fallback books are client-side — persist progress locally
+  if (isFallbackBookId(bookId)) {
+    const existing = readLocalBookProgress(userId).get(bookId)
+    const nextStatus = status ?? existing?.status ?? 'not_started'
+    const nextPercent =
+      progress ??
+      existing?.progress_percent ??
+      (nextStatus === 'completed' ? 100 : nextStatus === 'not_started' ? 0 : 10)
+    const local = writeLocalBookProgress(userId, {
+      book_id: bookId,
+      status: nextStatus,
+      progress_percent: nextPercent,
+      notes: patch.notes !== undefined ? patch.notes : (existing?.notes ?? null),
+      started_at:
+        nextStatus === 'in_progress'
+          ? existing?.started_at ?? now
+          : nextStatus === 'not_started'
+            ? null
+            : existing?.started_at ?? null,
+      completed_at: nextStatus === 'completed' ? now : null,
+      last_studied_at: now,
+    })
+    void logActivity(supabase, {
+      userId,
+      eventType: 'book_progress_updated',
+      metadata: { bookId, status: nextStatus, progress_percent: nextPercent, fallback: true },
+    })
+    return {
+      id: `local-${bookId}`,
+      user_id: userId,
+      book_id: bookId,
+      status: local.status,
+      progress_percent: local.progress_percent,
+      notes: local.notes,
+      started_at: local.started_at,
+      completed_at: local.completed_at,
+      last_studied_at: local.last_studied_at,
+      created_at: local.last_studied_at,
+      updated_at: local.last_studied_at,
+    }
+  }
 
   const payload: Record<string, unknown> = {
     user_id: userId,
