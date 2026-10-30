@@ -30,36 +30,6 @@ export function shuffleItems<T>(arr: T[]): T[] {
   return a
 }
 
-function localFallbackQuestions(
-  subject: string,
-  need: number,
-  difficulty: string,
-  topicFilter?: string,
-): GenQuestion[] {
-  const label = [subject, topicFilter].filter(Boolean).join(' — ') || 'General studies'
-  const out: GenQuestion[] = []
-  for (let i = 1; i <= need; i += 1) {
-    const options = [
-      `Key idea ${i}A about ${label}`,
-      `Key idea ${i}B about ${label}`,
-      `Key idea ${i}C about ${label}`,
-      `Key idea ${i}D about ${label}`,
-    ]
-    const correct = options[i % 4]!
-    out.push({
-      question_type: 'multiple_choice',
-      prompt: `(${difficulty}) Practice question ${i} for ${label}: which option best fits a foundational revision point?`,
-      options,
-      correct_answer: correct,
-      explanation:
-        'Local practice fallback used because question generation was unavailable. Retry later for AI questions.',
-      topic_label: topicFilter || subject,
-      bank_question_id: null,
-    })
-  }
-  return out
-}
-
 /**
  * Generate quiz questions from the academic subject label via /api/generate-quiz.
  * Always tries to return enough questions (API fallback, then local fallback).
@@ -79,8 +49,13 @@ export async function generateQuestionsForSubject(input: {
   let lastError = ''
   const diff = difficulty === 'all' ? 'medium' : difficulty
 
-  while (remaining > 0) {
-    const batch = Math.min(remaining, 10)
+  const seen = new Set<string>()
+  let unique: GenQuestion[] = []
+  let rounds = 0
+
+  while (unique.length < need && rounds < 6) {
+    rounds += 1
+    const batch = Math.min(need - unique.length, 10)
     const courseLabel = [subject, topicFilter].filter(Boolean).join(' — ')
     try {
       const res = await fetch('/api/generate-quiz', {
@@ -115,38 +90,57 @@ export async function generateQuestionsForSubject(input: {
         lastError = data.warning || data.error || 'AI returned no questions'
         break
       }
-      if (data.warning) lastError = data.warning
-      out.push(...chunk)
-      remaining -= chunk.length
+      // Ignore AI warnings once we have usable questions; never block exam start
+      if (data.warning && !data.fallback) lastError = data.warning
+      let added = 0
+      for (const q of chunk) {
+        const k = fingerprintPrompt(q.prompt || '')
+        if (!k || seen.has(k)) continue
+        seen.add(k)
+        unique.push(q)
+        added += 1
+        if (unique.length >= need) break
+      }
+      if (added === 0) {
+        // Same questions repeated — stop calling API and use local fill
+        break
+      }
     } catch (e) {
       lastError = e instanceof Error ? e.message : 'Network error while generating questions'
       break
     }
   }
 
-  // Deduplicate
-  const seen = new Set<string>()
-  let unique = out.filter((q) => {
-    const k = fingerprintPrompt(q.prompt || '')
-    if (!k || seen.has(k)) return false
-    seen.add(k)
-    return true
-  })
-
   if (unique.length < need) {
-    const fill = localFallbackQuestions(subject, need - unique.length, diff, topicFilter)
-    for (const q of fill) {
-      const k = fingerprintPrompt(q.prompt)
+    // Force unique local items with index in fingerprint
+    for (let i = unique.length; i < need; i += 1) {
+      const options = [
+        `Key idea ${i + 1}A about ${subject}`,
+        `Key idea ${i + 1}B about ${subject}`,
+        `Key idea ${i + 1}C about ${subject}`,
+        `Key idea ${i + 1}D about ${subject}`,
+      ]
+      const prompt = `#${i + 1} (${diff}) ${subject}${topicFilter ? ` / ${topicFilter}` : ''}: pick the best foundational revision point.`
+      const k = fingerprintPrompt(prompt)
       if (seen.has(k)) continue
       seen.add(k)
-      unique.push(q)
+      unique.push({
+        question_type: 'multiple_choice',
+        prompt,
+        options,
+        correct_answer: options[i % 4]!,
+        explanation:
+          'Local practice fallback — AI model unavailable or returned duplicates. Retry later for richer questions.',
+        topic_label: topicFilter || subject,
+        bank_question_id: null,
+      })
     }
-    if (!lastError) lastError = 'Filled remaining questions with local practice fallback'
   }
 
   return {
     questions: unique.slice(0, need),
-    error: unique.length < need ? lastError || undefined : undefined,
+    // Only surface error if we still could not reach the requested count
+    error: unique.length < need ? lastError || 'Could not build enough questions' : undefined,
   }
 }
 

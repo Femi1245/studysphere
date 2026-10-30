@@ -4,7 +4,7 @@ import {
   type ParsedQuizQuestion,
 } from './parse-quiz-questions.js'
 
-const FALLBACK_MODELS = ['openai/gpt-oss-20b', 'llama-3.3-70b-versatile'] as const
+const FALLBACK_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'] as const
 
 async function callGroqOnce(input: {
   apiKey: string

@@ -129,12 +129,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
-  // Keep in sync with models available on Groq (invalid IDs return 404 and force fallback)
+  // Free/dev Groq: llama-3.1/3.3 were shut down Aug 2026 — use gpt-oss only
   const models = [
     ...new Set([
       process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
       'openai/gpt-oss-20b',
-      'llama-3.3-70b-versatile',
+      'openai/gpt-oss-120b',
     ]),
   ]
 

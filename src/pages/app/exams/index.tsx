@@ -288,31 +288,44 @@ export function ExaminationCentrePage() {
           if (picked.length >= count) break
         }
         // Final local fill so assessment can always start even if API is down
-        if (picked.length < count) {
-          for (let i = picked.length; i < count; i += 1) {
-            const options = [
-              `Revision point ${i + 1}A`,
-              `Revision point ${i + 1}B`,
-              `Revision point ${i + 1}C`,
-              `Revision point ${i + 1}D`,
-            ]
-            const prompt = `Practice ${i + 1} — ${subjectForQuestions}: choose the best foundational idea.`
-            const k = fingerprintPrompt(prompt + i)
-            if (seenFp.has(k)) continue
-            seenFp.add(k)
-            picked.push({
-              question_type: 'multiple_choice',
-              prompt,
-              options,
-              correct_answer: options[i % 4]!,
-              explanation: genErr
-                ? `Local practice item (${genErr})`
-                : 'Local practice item while question banks/AI catch up.',
-              topic_label: topicFilter.trim() || subjectForQuestions,
-              bank_question_id: null,
-            })
-          }
+        for (let i = picked.length; i < count; i += 1) {
+          const options = [
+            `Revision point ${i + 1}A`,
+            `Revision point ${i + 1}B`,
+            `Revision point ${i + 1}C`,
+            `Revision point ${i + 1}D`,
+          ]
+          const prompt = `Q${i + 1}. ${subjectForQuestions}: choose the best foundational idea for revision.`
+          const k = `local-${i}-${fingerprintPrompt(prompt)}`
+          if (seenFp.has(k)) continue
+          seenFp.add(k)
+          picked.push({
+            question_type: 'multiple_choice',
+            prompt,
+            options,
+            correct_answer: options[i % 4]!,
+            explanation: genErr
+              ? `Local practice item (${genErr})`
+              : 'Local practice item while question banks/AI catch up.',
+            topic_label: topicFilter.trim() || subjectForQuestions,
+            bank_question_id: null,
+          })
         }
+      }
+
+      // Absolute guarantee: pad until we meet the minimum
+      while (picked.length < count) {
+        const i = picked.length
+        const options = [`Option A${i}`, `Option B${i}`, `Option C${i}`, `Option D${i}`]
+        picked.push({
+          question_type: 'multiple_choice',
+          prompt: `Guarantee item ${i + 1} for ${subjectForQuestions}`,
+          options,
+          correct_answer: options[0]!,
+          explanation: 'Emergency pad item so the exam can start.',
+          topic_label: subjectForQuestions,
+          bank_question_id: null,
+        })
       }
 
       const minNeeded = isAssessment ? MIN_QUIZ_QUESTIONS : 1
