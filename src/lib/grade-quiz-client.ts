@@ -28,7 +28,7 @@ function normalize(s: string): string {
   return s.trim().toLowerCase()
 }
 
-function isCorrect(questionType: string, correctAnswer: string, given: string): boolean {
+function isCorrect(correctAnswer: string, given: string): boolean {
   const a = normalize(given)
   const b = normalize(correctAnswer)
   if (!a) return false
@@ -60,8 +60,7 @@ export async function gradeQuizClientSide(input: {
   let score = 0
   const review: GradeReviewItem[] = questions.map((q) => {
     const given = abandoned ? '' : answers[q.id] ?? ''
-    const correct =
-      !abandoned && isCorrect(q.question_type, q.correct_answer ?? '', given)
+    const correct = !abandoned && isCorrect(q.correct_answer ?? '', given)
     if (correct) score += 1
     return {
       question_id: q.id,

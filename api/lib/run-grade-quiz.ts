@@ -34,7 +34,7 @@ function normalize(s: string): string {
   return s.trim().toLowerCase()
 }
 
-function isCorrect(questionType: string, correctAnswer: string, given: string): boolean {
+function isCorrect(correctAnswer: string, given: string): boolean {
   const a = normalize(given)
   const b = normalize(correctAnswer)
   if (!a) return false
@@ -69,7 +69,11 @@ export async function runGradeQuiz(
     .maybeSingle()
 
   if (!full.error && full.data) {
-    quizRow = full.data as typeof quizRow
+    quizRow = full.data as {
+      id: string
+      pass_mark?: number | null
+      catalogue_course_id?: string | null
+    }
   } else {
     const basic = await supabase
       .from('quizzes')
@@ -110,8 +114,7 @@ export async function runGradeQuiz(
 
   const graded = questions.map((q) => {
     const given = abandoned ? '' : answerMap.get(q.id as string) ?? ''
-    const correct =
-      !abandoned && isCorrect(String(q.question_type), String(q.correct_answer ?? ''), given)
+    const correct = !abandoned && isCorrect(String(q.correct_answer ?? ''), given)
     if (correct) score += 1
     return {
       question_id: q.id as string,
