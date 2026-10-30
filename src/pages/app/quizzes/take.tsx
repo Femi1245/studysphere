@@ -7,32 +7,14 @@ import { Spinner } from '@/components/ui/spinner'
 import { useToast } from '@/components/ui/toast'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
+import { gradeQuizClientSide, type GradeResultPayload } from '@/lib/grade-quiz-client'
 import { regenerateRecommendations } from '@/lib/learning-engine'
 import { parseQuestionOptions } from '@/lib/start-academic-quiz'
 import { formatSeconds } from '@/lib/utils'
 import { trySupabase } from '@/lib/supabase/client'
 import type { Quiz, QuizQuestion } from '@/types/database'
 
-type GradeResult = {
-  attempt_id: string
-  score: number
-  max_score: number
-  percentage: number
-  pass_mark: number
-  passed: boolean
-  abandoned: boolean
-  review: Array<{
-    question_id: string
-    prompt: string
-    your_answer: string
-    correct_answer: string
-    is_correct: boolean
-    explanation: string | null
-    topic_label: string | null
-  }>
-  weak_topics: string[]
-  revision_href: string
-}
+type GradeResult = GradeResultPayload
 
 function normalizeQuestion(row: QuizQuestion): QuizQuestion {
   return {
@@ -118,26 +100,50 @@ export function QuizTakePage() {
 
       try {
         const currentAnswers = answersRef.current
-        const res = await fetch('/api/grade-quiz', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            quiz_id: id,
-            abandoned,
-            started_at: active?.startedAt,
-            answers: Object.entries(currentAnswers).map(([question_id, answer]) => ({
-              question_id,
-              answer,
-            })),
-          }),
-        })
-        const data = (await res.json()) as GradeResult & { error?: string }
-        if (!res.ok) {
-          throw new Error(data.error || 'Grading failed')
+        let data: GradeResult | null = null
+
+        try {
+          const res = await fetch('/api/grade-quiz', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              quiz_id: id,
+              abandoned,
+              started_at: active?.startedAt,
+              answers: Object.entries(currentAnswers).map(([question_id, answer]) => ({
+                question_id,
+                answer,
+              })),
+            }),
+          })
+          const payload = (await res.json().catch(() => ({}))) as GradeResult & { error?: string }
+          if (res.ok && Array.isArray(payload.review)) {
+            data = payload
+          }
+        } catch {
+          /* fall through to client grading */
         }
+
+        if (!data) {
+          if (!supabase || !questions.length) {
+            throw new Error('Grading failed — no questions loaded')
+          }
+          // API down / incomplete response — grade exactly from loaded questions and save
+          data = await gradeQuizClientSide({
+            supabase,
+            userId: user.id,
+            quizId: id,
+            questions,
+            answers: currentAnswers,
+            abandoned,
+            startedAt: active?.startedAt,
+            passMark: Number(quiz?.pass_mark ?? active?.passMark ?? 50),
+          })
+        }
+
         clearSession()
         setResult(data)
         if (supabase) {
@@ -162,7 +168,7 @@ export function QuizTakePage() {
         submittingRef.current = false
       }
     },
-    [user, id, session, active, clearSession, supabase, toast],
+    [user, id, session, active, clearSession, supabase, toast, questions, quiz],
   )
 
   useEffect(() => {
