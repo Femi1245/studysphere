@@ -129,10 +129,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
+  // Keep in sync with models available on Groq (invalid IDs return 404 and force fallback)
   const models = [
     ...new Set([
-      process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-      'llama-3.1-8b-instant',
+      process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
+      'openai/gpt-oss-20b',
+      'llama-3.3-70b-versatile',
     ]),
   ]
 

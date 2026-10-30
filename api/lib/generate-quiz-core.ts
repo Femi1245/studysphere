@@ -4,7 +4,7 @@ import {
   type ParsedQuizQuestion,
 } from './parse-quiz-questions.js'
 
-const FALLBACK_MODELS = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'] as const
+const FALLBACK_MODELS = ['openai/gpt-oss-20b', 'llama-3.3-70b-versatile'] as const
 
 async function callGroqOnce(input: {
   apiKey: string
@@ -76,7 +76,7 @@ export async function generateQuizQuestionsCore(input: {
   const count = Math.min(Math.max(Number(input.count) || 0, 1), 40)
   const course = String(input.course || 'General studies').slice(0, 200)
   const difficulty = input.difficulty || 'medium'
-  const primary = input.model || 'llama-3.1-8b-instant'
+  const primary = input.model || 'openai/gpt-oss-20b'
   const models = [...new Set([primary, ...FALLBACK_MODELS])]
 
   let lastError = ''

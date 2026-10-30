@@ -198,7 +198,7 @@ function aiTutorDevPlugin(env: Record<string, string>): Plugin {
 
               const result = await generateQuizQuestionsCore({
                 apiKey,
-                model: env.GROQ_MODEL || 'llama-3.1-8b-instant',
+                model: env.GROQ_MODEL || 'openai/gpt-oss-20b',
                 count,
                 course,
                 difficulty,
