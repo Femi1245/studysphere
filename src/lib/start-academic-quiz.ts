@@ -16,8 +16,24 @@ export function fingerprintPrompt(prompt: string): string {
 }
 
 export function parseQuestionOptions(raw: unknown): string[] | null {
-  if (Array.isArray(raw)) return raw.map(String)
-  if (raw && typeof raw === 'object') return Object.values(raw as Record<string, string>)
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean)
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (!trimmed) return null
+    try {
+      return parseQuestionOptions(JSON.parse(trimmed))
+    } catch {
+      return trimmed
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    }
+  }
+  if (raw && typeof raw === 'object') {
+    return Object.values(raw as Record<string, unknown>)
+      .map(String)
+      .filter(Boolean)
+  }
   return null
 }
 

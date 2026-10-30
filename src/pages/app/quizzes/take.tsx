@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useBlocker, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/toast'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
 import { regenerateRecommendations } from '@/lib/learning-engine'
+import { parseQuestionOptions } from '@/lib/start-academic-quiz'
 import { formatSeconds } from '@/lib/utils'
 import { trySupabase } from '@/lib/supabase/client'
 import type { Quiz, QuizQuestion } from '@/types/database'
@@ -33,6 +34,13 @@ type GradeResult = {
   revision_href: string
 }
 
+function normalizeQuestion(row: QuizQuestion): QuizQuestion {
+  return {
+    ...row,
+    options: parseQuestionOptions(row.options),
+  }
+}
+
 export function QuizTakePage() {
   const { id } = useParams<{ id: string }>()
   const { user, session } = useAuth()
@@ -46,28 +54,52 @@ export function QuizTakePage() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(0)
   const [result, setResult] = useState<GradeResult | null>(null)
 
   const submittingRef = useRef(false)
   const finishedRef = useRef(false)
+  const answersRef = useRef(answers)
+  answersRef.current = answers
 
   const endsAt = active?.endsAt ? new Date(active.endsAt).getTime() : 0
+  const sessionActive = Boolean(active && active.quizId === id)
 
   const load = useCallback(async () => {
-    if (!supabase || !user || !id) return
+    if (!supabase || !user || !id) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
-    const [{ data: q }, { data: qs }] = await Promise.all([
+    setLoadError(null)
+    const [quizRes, questionsRes] = await Promise.all([
       supabase.from('quizzes').select('*').eq('id', id).eq('user_id', user.id).maybeSingle(),
       supabase
         .from('quiz_questions')
-        .select('*')
+        .select('id, quiz_id, user_id, question_type, prompt, options, correct_answer, explanation, order_index')
         .eq('quiz_id', id)
         .order('order_index'),
     ])
-    setQuiz((q as Quiz | null) ?? null)
-    setQuestions((qs as QuizQuestion[]) ?? [])
+
+    if (quizRes.error) {
+      setLoadError(quizRes.error.message)
+      setQuiz(null)
+      setQuestions([])
+      setLoading(false)
+      return
+    }
+    if (questionsRes.error) {
+      setLoadError(questionsRes.error.message)
+      setQuiz((quizRes.data as Quiz | null) ?? null)
+      setQuestions([])
+      setLoading(false)
+      return
+    }
+
+    setQuiz((quizRes.data as Quiz | null) ?? null)
+    setQuestions(((questionsRes.data as QuizQuestion[]) ?? []).map(normalizeQuestion))
     setLoading(false)
   }, [supabase, user, id])
 
@@ -85,6 +117,7 @@ export function QuizTakePage() {
       setSubmitting(true)
 
       try {
+        const currentAnswers = answersRef.current
         const res = await fetch('/api/grade-quiz', {
           method: 'POST',
           headers: {
@@ -95,7 +128,7 @@ export function QuizTakePage() {
             quiz_id: id,
             abandoned,
             started_at: active?.startedAt,
-            answers: Object.entries(answers).map(([question_id, answer]) => ({
+            answers: Object.entries(currentAnswers).map(([question_id, answer]) => ({
               question_id,
               answer,
             })),
@@ -129,11 +162,11 @@ export function QuizTakePage() {
         submittingRef.current = false
       }
     },
-    [user, id, session, answers, active, clearSession, supabase, toast],
+    [user, id, session, active, clearSession, supabase, toast],
   )
 
   useEffect(() => {
-    if (!endsAt || result) return
+    if (!endsAt || result || !sessionActive) return
     const tick = () => {
       const left = Math.max(0, Math.floor((endsAt - Date.now()) / 1000))
       setSecondsLeft(left)
@@ -144,28 +177,12 @@ export function QuizTakePage() {
     tick()
     const t = window.setInterval(tick, 1000)
     return () => window.clearInterval(t)
-  }, [endsAt, result, finalize])
+  }, [endsAt, result, sessionActive, finalize])
 
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      Boolean(active) &&
-      !result &&
-      currentLocation.pathname !== nextLocation.pathname &&
-      !finishedRef.current,
-  )
-
+  // BrowserRouter does not support useBlocker — guard leave with history + unload instead
   useEffect(() => {
-    if (blocker.state !== 'blocked') return
-    const leave = window.confirm('Leaving this quiz will FAIL your attempt. Continue?')
-    if (leave) {
-      void finalize(true).then(() => blocker.proceed?.())
-    } else {
-      blocker.reset?.()
-    }
-  }, [blocker, finalize])
+    if (result || !sessionActive) return
 
-  useEffect(() => {
-    if (result || !active) return
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault()
       e.returnValue = ''
@@ -173,21 +190,48 @@ export function QuizTakePage() {
     const onPageHide = () => {
       if (!finishedRef.current) void finalize(true)
     }
+    const onPopState = () => {
+      if (finishedRef.current) return
+      const leave = window.confirm('Leaving this quiz will FAIL your attempt. Continue?')
+      if (leave) {
+        void finalize(true)
+      } else {
+        window.history.pushState(null, '', window.location.href)
+      }
+    }
+
+    window.history.pushState(null, '', window.location.href)
     window.addEventListener('beforeunload', onBeforeUnload)
     window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('popstate', onPopState)
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload)
       window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('popstate', onPopState)
     }
-  }, [active, result, finalize])
+  }, [sessionActive, result, finalize])
 
   const current = questions[index]
+  const options = current ? parseQuestionOptions(current.options) : null
   const progressLabel = useMemo(
-    () => `${index + 1} / ${questions.length}`,
+    () => `${Math.min(index + 1, Math.max(questions.length, 1))} / ${questions.length}`,
     [index, questions.length],
   )
 
   if (loading) return <Skeleton className="h-96 rounded-2xl" />
+
+  if (loadError) {
+    return (
+      <Card className="rounded-2xl p-6">
+        <p className="font-medium">Could not load exam</p>
+        <p className="mt-2 text-sm text-ink-muted">{loadError}</p>
+        <Button className="mt-4" onClick={() => void load()}>
+          Retry
+        </Button>
+      </Card>
+    )
+  }
+
   if (!quiz) {
     return (
       <Card className="rounded-2xl p-6">
@@ -253,12 +297,32 @@ export function QuizTakePage() {
     )
   }
 
-  if (!active || active.quizId !== id) {
+  if (!sessionActive) {
     return (
       <Card className="rounded-2xl p-6">
         <p className="text-sm text-ink-muted">No active session. Start from the Examination centre.</p>
         <Button className="mt-4" onClick={() => navigate('/app/exams')}>
           Examination centre
+        </Button>
+      </Card>
+    )
+  }
+
+  if (!questions.length) {
+    return (
+      <Card className="rounded-2xl p-6">
+        <p className="font-medium">This exam has no questions yet.</p>
+        <p className="mt-2 text-sm text-ink-muted">
+          Start again from the Examination centre so questions can be generated and saved.
+        </p>
+        <Button
+          className="mt-4"
+          onClick={() => {
+            clearSession()
+            navigate('/app/exams')
+          }}
+        >
+          Back to exams
         </Button>
       </Card>
     )
@@ -294,9 +358,9 @@ export function QuizTakePage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {current.question_type === 'multiple_choice' && current.options ? (
+            {current.question_type === 'multiple_choice' && options?.length ? (
               <div className="space-y-2">
-                {current.options.map((opt) => (
+                {options.map((opt) => (
                   <label
                     key={opt}
                     className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm ${
@@ -330,7 +394,8 @@ export function QuizTakePage() {
                 ))}
               </div>
             ) : null}
-            {current.question_type === 'short_answer' ? (
+            {current.question_type === 'short_answer' ||
+            (current.question_type === 'multiple_choice' && !options?.length) ? (
               <input
                 className="flex h-11 w-full rounded-xl border border-border bg-surface-elevated px-3 text-sm"
                 value={answers[current.id] ?? ''}
