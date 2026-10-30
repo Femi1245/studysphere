@@ -171,30 +171,46 @@ export async function createQuizAttempt(input: {
     topicFilter,
   } = input
 
-  const { data: quiz, error: quizErr } = await supabase
+  const quizPayloadFull = {
+    user_id: userId,
+    title,
+    description,
+    catalogue_course_id: catalogueCourseId,
+    bank_id: bankId || null,
+    difficulty: difficulty === 'all' ? null : difficulty,
+    pass_mark: passMark,
+    mode,
+    question_count: questions.length,
+    is_timed: mode === 'assessment',
+    randomized: true,
+    duration_minutes: durationMinutes,
+  }
+
+  let { data: quiz, error: quizErr } = await supabase
     .from('quizzes')
-    .insert({
-      user_id: userId,
-      title,
-      description,
-      catalogue_course_id: catalogueCourseId,
-      bank_id: bankId || null,
-      difficulty: difficulty === 'all' ? null : difficulty,
-      pass_mark: passMark,
-      mode,
-      question_count: questions.length,
-      is_timed: mode === 'assessment',
-      randomized: true,
-      duration_minutes: durationMinutes,
-    })
+    .insert(quizPayloadFull)
     .select('id')
     .single()
+
+  if (quizErr && /schema cache|column/i.test(quizErr.message)) {
+    ;({ data: quiz, error: quizErr } = await supabase
+      .from('quizzes')
+      .insert({
+        user_id: userId,
+        title,
+        description,
+        pass_mark: passMark,
+        duration_minutes: durationMinutes,
+      })
+      .select('id')
+      .single())
+  }
 
   if (quizErr || !quiz) {
     return { error: quizErr?.message || 'Could not create quiz' }
   }
 
-  const rows = questions.map((q, i) => ({
+  const fullRows = questions.map((q, i) => ({
     quiz_id: quiz.id,
     user_id: userId,
     question_type: q.question_type || 'multiple_choice',
@@ -208,10 +224,35 @@ export async function createQuizAttempt(input: {
     source_fingerprint: fingerprintPrompt(q.prompt),
   }))
 
-  const { error: qErr } = await supabase.from('quiz_questions').insert(rows)
+  let { error: qErr } = await supabase.from('quiz_questions').insert(fullRows)
+
+  // Older DBs may lack exam columns — retry with the core columns only
+  if (
+    qErr &&
+    /bank_question_id|topic_label|source_fingerprint|schema cache/i.test(qErr.message)
+  ) {
+    const basicRows = questions.map((q, i) => ({
+      quiz_id: quiz.id,
+      user_id: userId,
+      question_type: q.question_type || 'multiple_choice',
+      prompt: q.prompt,
+      options: q.options,
+      correct_answer: q.correct_answer,
+      explanation: q.explanation,
+      order_index: i,
+    }))
+    ;({ error: qErr } = await supabase.from('quiz_questions').insert(basicRows))
+  }
+
   if (qErr) {
     await supabase.from('quizzes').delete().eq('id', quiz.id)
-    return { error: qErr.message }
+    return {
+      error:
+        qErr.message +
+        ( /bank_question_id|schema cache/i.test(qErr.message)
+          ? ' — run supabase/migrations/20260328170000_quiz_questions_exam_columns.sql in Supabase SQL Editor.'
+          : ''),
+    }
   }
 
   return { quizId: quiz.id as string }
