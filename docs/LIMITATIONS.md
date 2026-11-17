@@ -17,13 +17,16 @@
 - Admin area for support requests (role-gated)
 - PWA install support
 - Light / dark theme
+- Campus housing MVP: listing filters, saved listings, inspection requests, provider submissions, and admin review
+- AI Tutor PDF study: client-side text extraction, PDF page previews, summaries, explanations, examples, and practice questions
 
 ## Limitations (intentional)
 
 - No Stripe / paid plans (Pricing page documents free access)
 - No study groups, collaborative notes, or peer messaging
 - No background / push notifications — in-app only
-- PDF OCR / full document AI reading is not implemented; unsupported types explain the limitation
+- Scanned/image-only PDF OCR and AI interpretation of embedded image pixels are not implemented. The tutor analyzes selectable PDF text; page previews let students inspect the original pages.
+- Housing listings require the `20261112170000_campus_housing.sql` migration and manual admin review. Provider identity documents, automated verification, maps, listing photo uploads, and payment/escrow are not implemented.
 - Short-answer grading is automated exact/normalized match, not semantic AI grading
 - Native App Store / Play Store builds require Capacitor steps in `docs/NATIVE.md`
 - Admin does not access private notes or AI transcripts

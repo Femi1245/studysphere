@@ -25,6 +25,7 @@ Ensure all routes rewrite to `index.html`. A `vercel.json` is included for this.
 ## Supabase backend
 
 1. Apply migrations from `supabase/migrations/`.
+   - In particular, apply `20261112170000_campus_housing.sql` to enable housing discovery, inspection requests, provider submissions, and admin review.
 2. Deploy functions:
    ```bash
    supabase functions deploy ai-tutor

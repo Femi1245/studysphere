@@ -4,6 +4,7 @@ import {
   BookMarked,
   BookOpen,
   Bot,
+  Building2,
   CalendarDays,
   FileText,
   ClipboardCheck,
@@ -35,6 +36,8 @@ type NavItem = {
 
 const desktopNav: NavItem[] = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/app/campus', label: 'Campus Hub', icon: Building2 },
+  { to: '/app/housing', label: 'Housing', icon: Home },
   { to: '/app/subjects', label: 'My Subjects', icon: BookOpen },
   { to: '/app/study-books', label: 'Study Books', icon: BookMarked },
   { to: '/app/courses', label: 'Courses', icon: Library },
@@ -52,6 +55,7 @@ const desktopNav: NavItem[] = [
 
 const mobileNav: NavItem[] = [
   { to: '/app', label: 'Home', icon: Home, end: true },
+  { to: '/app/housing', label: 'Housing', icon: Building2 },
   { to: '/app/courses', label: 'Courses', icon: Library },
   { to: '/app/planner', label: 'Planner', icon: CalendarDays },
   { to: '/app/ai', label: 'AI', icon: Bot },
@@ -60,6 +64,8 @@ const mobileNav: NavItem[] = [
 
 const pageTitles: Record<string, string> = {
   '/app': 'Dashboard',
+  '/app/campus': 'Campus Hub',
+  '/app/housing': 'Campus Housing',
   '/app/subjects': 'My Subjects',
   '/app/study-books': 'Study Books',
   '/app/courses': 'Course Library',

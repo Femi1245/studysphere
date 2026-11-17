@@ -8,6 +8,7 @@ import {
 } from 'date-fns'
 import {
   BookOpen,
+  Building2,
   Calendar,
   ClipboardList,
   FileText,
@@ -45,6 +46,7 @@ import { cn, formatDuration } from '@/lib/utils'
 import type {
   ActivityEvent,
   CatalogueCourse,
+  HousingListing,
   Note,
   Quiz,
   QuizAttempt,
@@ -86,6 +88,8 @@ export function DashboardPage() {
   >([])
   const [activity, setActivity] = useState<ActivityEvent[]>([])
   const [recommendations, setRecommendations] = useState<StudentRecommendation[]>([])
+  const [housingListings, setHousingListings] = useState<HousingListing[]>([])
+  const [housingError, setHousingError] = useState<string | null>(null)
 
   const supabase = trySupabase()
 
@@ -107,6 +111,7 @@ export function DashboardPage() {
         actRes,
         recRes,
         quizRes,
+        housingRes,
       ] = await Promise.all([
         supabase
           .from('study_tasks')
@@ -159,6 +164,13 @@ export function DashboardPage() {
           .order('created_at', { ascending: false })
           .limit(5),
         supabase.from('quizzes').select('*').eq('user_id', user.id),
+        supabase
+          .from('housing_listings')
+          .select('*')
+          .eq('status', 'published')
+          .gte('availability_checked_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+          .order('created_at', { ascending: false })
+          .limit(3),
       ])
 
       if (cancelled) return
@@ -172,6 +184,12 @@ export function DashboardPage() {
       setActivity((actRes.data as ActivityEvent[]) ?? [])
       setRecommendations((recRes.data as StudentRecommendation[]) ?? [])
       setQuizzes((quizRes.data as Quiz[]) ?? [])
+      if (housingRes.error) {
+        setHousingError(housingRes.error.message)
+      } else {
+        setHousingError(null)
+        setHousingListings((housingRes.data as HousingListing[]) ?? [])
+      }
       setLoading(false)
     }
 
@@ -305,6 +323,57 @@ export function DashboardPage() {
               New note
             </Link>
           </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/app/ai">
+              <FileText className="h-4 w-4" />
+              Study a PDF with AI
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Building2 className="h-5 w-5 text-primary-600" />
+              Housing near campus
+            </CardTitle>
+            <CardDescription>Compare listed prices and request an inspection.</CardDescription>
+          </div>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/app/housing">Explore housing</Link>
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {housingError ? (
+            <p className="text-sm text-ink-muted">
+              Housing is not ready yet. Apply the latest Supabase migration to enable listings.
+            </p>
+          ) : housingListings.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-ink-muted">No published rooms yet. Providers can submit a listing for review.</p>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/app/housing">Submit a listing</Link>
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-3">
+              {housingListings.map((listing) => (
+                <Link
+                  key={listing.id}
+                  to="/app/housing"
+                  className="rounded-xl border border-border p-3 transition hover:border-primary-300 hover:bg-primary-50/60 dark:hover:bg-primary-900/20"
+                >
+                  <p className="font-medium">{listing.title}</p>
+                  <p className="mt-1 text-sm text-ink-muted">{listing.area} · {listing.institution_name}</p>
+                  <p className="mt-2 text-sm font-semibold">
+                    ₦{Number(listing.rent_amount).toLocaleString('en-NG')} / {listing.rent_period}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

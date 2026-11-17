@@ -1,5 +1,5 @@
-import { Bot, Plus, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Bot, FileText, FileUp, Plus, RefreshCw, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { SupabaseSetupBanner } from '@/components/app/supabase-setup-banner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -8,8 +8,12 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
+import { readStudyPdf, type ParsedStudyPdf } from '@/lib/pdf-study'
 import { trySupabase } from '@/lib/supabase/client'
 import type { AiConversation, AiMessage } from '@/types/database'
+
+const pdfStudyPrompt = (fileName: string) =>
+  `Please study the attached PDF "${fileName}" and teach it back to me. Use only information supported by its text and mention page numbers where possible. Organize your answer with: (1) a short plain-language summary, (2) a section-by-section breakdown, (3) key terms or formulas explained simply, (4) at least two practical worked examples, (5) one everyday analogy, (6) a simple text diagram or flow showing how the ideas connect, and (7) five practice questions followed by an answer key. Say clearly when an image, scan, or diagram cannot be interpreted from the extracted text.`
 
 export function AiTutorPage() {
   const { user, profile, session } = useAuth()
@@ -23,6 +27,11 @@ export function AiTutorPage() {
   const [error, setError] = useState<string | null>(null)
   const [setupRequired, setSetupRequired] = useState(false)
   const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
+  const [lastFailedDocumentContext, setLastFailedDocumentContext] = useState<string | null>(null)
+  const [studyPdf, setStudyPdf] = useState<ParsedStudyPdf | null>(null)
+  const [readingPdf, setReadingPdf] = useState(false)
+  const [pdfError, setPdfError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !user) return
@@ -67,10 +76,17 @@ export function AiTutorPage() {
       setConversations((c) => [data as AiConversation, ...c])
       setActiveId(data.id)
       setMessages([])
+      setStudyPdf(null)
+      setPdfError(null)
     }
   }
 
-  const askTutor = async (userContent: string, convId: string, history: AiMessage[]) => {
+  const askTutor = async (
+    userContent: string,
+    convId: string,
+    history: AiMessage[],
+    contextNote?: string,
+  ) => {
     const token = session?.access_token
     if (!token) throw new Error('Not signed in')
 
@@ -78,6 +94,7 @@ export function AiTutorPage() {
       message: userContent,
       conversation_id: convId,
       education_level: profile?.education_level ?? null,
+      context_note: contextNote || undefined,
       history: history
         .filter((m) => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({ role: m.role, content: m.content })),
@@ -136,15 +153,18 @@ export function AiTutorPage() {
     return reply
   }
 
-  const send = async (overrideMessage?: string) => {
+  const send = async (overrideMessage?: string, overrideDocumentContext?: string) => {
     if (!supabase || !user || sending) return
     const userContent = (overrideMessage ?? input).trim()
     if (!userContent) return
+    const documentContext =
+      overrideDocumentContext !== undefined ? overrideDocumentContext : studyPdf?.text
 
     setSending(true)
     setError(null)
     setSetupRequired(false)
     setLastFailedMessage(null)
+    setLastFailedDocumentContext(null)
     if (!overrideMessage) setInput('')
 
     let convId = activeId
@@ -177,11 +197,10 @@ export function AiTutorPage() {
       content: userContent,
       created_at: new Date().toISOString(),
     }
-    const historyForAi = [...messages, optimisticUser]
-    setMessages(historyForAi)
+    setMessages([...messages, optimisticUser])
 
     try {
-      const reply = await askTutor(userContent, convId, historyForAi)
+      const reply = await askTutor(userContent, convId, messages, documentContext)
       await supabase.from('ai_messages').insert({
         conversation_id: convId,
         user_id: user.id,
@@ -196,10 +215,37 @@ export function AiTutorPage() {
       await loadConversations()
     } catch (e) {
       setLastFailedMessage(userContent)
+      setLastFailedDocumentContext(documentContext ?? null)
       setError(e instanceof Error ? e.message : 'AI request failed')
     } finally {
       setSending(false)
     }
+  }
+
+  const handlePdfUpload = async (file: File | undefined) => {
+    if (!file || readingPdf) return
+    setStudyPdf(null)
+    setPdfError(null)
+    setReadingPdf(true)
+    try {
+      const parsed = await readStudyPdf(file)
+      setStudyPdf(parsed)
+      if (!parsed.text) {
+        setPdfError(
+          'No selectable text was found. This may be a scanned/image-only PDF; previews are available, but OCR is not enabled.',
+        )
+      }
+    } catch (e) {
+      setPdfError(e instanceof Error ? e.message : 'Could not read this PDF.')
+    } finally {
+      setReadingPdf(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const clearStudyPdf = () => {
+    setStudyPdf(null)
+    setPdfError(null)
   }
 
   if (!supabase) return <SupabaseSetupBanner />
@@ -223,7 +269,11 @@ export function AiTutorPage() {
                 className={`mb-1 w-full rounded-lg px-2 py-2 text-left text-sm ${
                   activeId === c.id ? 'bg-primary-100 dark:bg-primary-900/40' : 'hover:bg-primary-50'
                 }`}
-                onClick={() => setActiveId(c.id)}
+                onClick={() => {
+                  setActiveId(c.id)
+                  setStudyPdf(null)
+                  setPdfError(null)
+                }}
               >
                 {c.title}
               </button>
@@ -233,6 +283,64 @@ export function AiTutorPage() {
       </aside>
 
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-surface-elevated">
+        {studyPdf ? (
+          <Card className="m-3 mb-0 rounded-xl">
+            <CardContent className="space-y-3 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-2">
+                  <FileText className="mt-0.5 h-5 w-5 shrink-0 text-primary-600" />
+                  <div>
+                    <p className="font-medium">{studyPdf.fileName}</p>
+                    <p className="text-xs text-ink-muted">
+                      {studyPdf.pageCount} pages · {studyPdf.text.length.toLocaleString()} text characters
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={sending || !studyPdf.text}
+                    onClick={() => void send(pdfStudyPrompt(studyPdf.fileName), studyPdf.text)}
+                  >
+                    Summarize &amp; explain
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" aria-label="Remove PDF" onClick={clearStudyPdf}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              {pdfError ? (
+                <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{pdfError}</p>
+              ) : null}
+              <p className="text-xs text-ink-muted">
+                Page previews are rendered below. The tutor analyzes selectable PDF text, not image pixels; scanned diagrams may need manual interpretation.
+                  PDF text is sent to the configured AI provider only when you send a question or summary request, and is not saved in chat history.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {studyPdf.previews.map((preview) => (
+                  <figure key={preview.page} className="overflow-hidden rounded-lg border border-border bg-surface">
+                    <img
+                      src={preview.imageUrl}
+                      alt={`Preview of page ${preview.page} in ${studyPdf.fileName}`}
+                      className="h-36 w-full object-contain"
+                    />
+                    <figcaption className="border-t border-border px-2 py-1 text-center text-xs text-ink-muted">
+                      Page {preview.page}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {pdfError && !studyPdf ? (
+          <p role="alert" className="mx-4 mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+            {pdfError}
+          </p>
+        ) : null}
+
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {messages.length === 0 ? (
             <EmptyState
@@ -249,6 +357,7 @@ export function AiTutorPage() {
                     ? 'ml-auto bg-primary-600 text-white'
                     : 'bg-primary-50 dark:bg-primary-900/30'
                 }`}
+                style={{ whiteSpace: 'pre-wrap' }}
               >
                 {m.content}
               </div>
@@ -296,7 +405,7 @@ export function AiTutorPage() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => void send(lastFailedMessage)}
+                onClick={() => void send(lastFailedMessage, lastFailedDocumentContext ?? '')}
               >
                 <RefreshCw className="h-4 w-4" />
                 Retry
@@ -316,6 +425,24 @@ export function AiTutorPage() {
             void send()
           }}
         >
+          <input
+            ref={fileInputRef}
+            className="sr-only"
+            type="file"
+            accept="application/pdf,.pdf"
+            aria-label="Upload a PDF for study"
+            onChange={(event) => void handlePdfUpload(event.currentTarget.files?.[0])}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={sending || readingPdf}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Upload a PDF"
+          >
+            <FileUp className="h-4 w-4" />
+            {readingPdf ? 'Reading PDF…' : 'PDF'}
+          </Button>
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}

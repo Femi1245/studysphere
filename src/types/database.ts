@@ -294,6 +294,51 @@ export interface AiMessage {
   created_at: string
 }
 
+export type HousingPropertyType = 'room' | 'self_contained' | 'shared_apartment' | 'hostel_bed_space'
+export type HousingListingStatus = 'draft' | 'submitted' | 'published' | 'paused' | 'occupied' | 'rejected'
+export type HousingVerificationStatus =
+  | 'unverified'
+  | 'identity_checked'
+  | 'provider_checked'
+  | 'property_inspected'
+
+export interface HousingListing {
+  id: string
+  provider_id: string
+  title: string
+  description: string
+  institution_name: string
+  area: string
+  property_type: HousingPropertyType
+  rent_amount: number
+  rent_period: 'year' | 'semester' | 'month'
+  agent_fee: number
+  agreement_fee: number
+  caution_fee: number
+  service_charge: number
+  amenities: string[]
+  status: HousingListingStatus
+  verification_status: HousingVerificationStatus
+  availability_checked_at: string
+  verification_checked_at: string | null
+  review_notes: string | null
+  reviewed_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface HousingInspectionRequest {
+  id: string
+  listing_id: string
+  student_id: string
+  preferred_at: string
+  message: string
+  status: 'pending' | 'accepted' | 'declined' | 'completed' | 'cancelled'
+  created_at: string
+  updated_at: string
+  housing_listings?: Pick<HousingListing, 'title' | 'area'> | null
+}
+
 export interface Country {
   id: string
   code: string

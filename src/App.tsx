@@ -14,9 +14,11 @@ import { CourseDetailPage } from '@/pages/app/courses/detail'
 import { CoursesLibraryPage } from '@/pages/app/courses'
 import { CourseReaderPage } from '@/pages/app/courses/reader'
 import { AiTutorPage } from '@/pages/app/ai-tutor'
+import { CampusHubPage } from '@/pages/app/campus-hub'
 import { DashboardPage } from '@/pages/app/dashboard'
 import { ExaminationCentrePage } from '@/pages/app/exams'
 import { FlashcardsPage } from '@/pages/app/flashcards'
+import { HousingPage } from '@/pages/app/housing'
 import { LearningPage } from '@/pages/app/learning'
 import { NoteEditorPage } from '@/pages/app/notes/editor'
 import { NotesPage } from '@/pages/app/notes'
@@ -74,6 +76,8 @@ export default function App() {
           <Route path="courses/:id" element={<CourseDetailPage />} />
           <Route path="courses/materials/:materialId" element={<CourseReaderPage />} />
           <Route path="academic-profile" element={<AcademicProfilePage />} />
+          <Route path="campus" element={<CampusHubPage />} />
+          <Route path="housing" element={<HousingPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="learning" element={<LearningPage />} />
           <Route path="exams" element={<ExaminationCentrePage />} />
