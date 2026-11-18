@@ -1,6 +1,8 @@
 # Native iOS & Android (Capacitor)
 
-StudySphere ships as a responsive web app and installable PWA. It is **not** a published App Store / Play Store app out of the box.
+StudySphere ships as a responsive web app and installable PWA. Use the **Install app** button on the deployed HTTPS website, or on iPhone/iPad open the site in Safari and select **Share → Add to Home Screen**. The PWA opens without browser chrome and caches the application shell; sign-in, Supabase data, and AI still require an internet connection.
+
+An installable PWA is not an APK and is not a published App Store / Play Store app. For native Android/iOS packages, continue with the Capacitor steps below.
 
 To produce native shells:
 

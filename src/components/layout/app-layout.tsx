@@ -22,6 +22,7 @@ import {
 import { useEffect, useMemo, type ComponentType, type MouseEvent } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Logo } from '@/components/brand/logo'
+import { InstallAppButton } from '@/components/app/install-app-button'
 import { Button } from '@/components/ui/button'
 import { useActiveQuiz } from '@/contexts/active-quiz-context'
 import { useAuth } from '@/contexts/auth-context'
@@ -192,6 +193,9 @@ export function AppLayout() {
           </span>
         </nav>
         <div className="border-t border-border p-4">
+          <div className="mb-3">
+            <InstallAppButton />
+          </div>
           <Link
             to="/app/notifications"
             className="mb-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-muted hover:bg-primary-50 dark:hover:bg-primary-900/40"
@@ -230,13 +234,16 @@ export function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-surface/95 px-4 backdrop-blur lg:hidden">
           <h1 className="font-display text-lg font-semibold">{title}</h1>
-          <Link
-            to="/app/notifications"
-            className="rounded-xl p-2 text-ink-muted hover:bg-primary-50"
-            aria-label="Notifications"
-          >
-            <Bell className="h-5 w-5" />
-          </Link>
+          <div className="flex items-center gap-1">
+            <InstallAppButton compact />
+            <Link
+              to="/app/notifications"
+              className="rounded-xl p-2 text-ink-muted hover:bg-primary-50"
+              aria-label="Notifications"
+            >
+              <Bell className="h-5 w-5" />
+            </Link>
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 pb-24 lg:p-6 lg:pb-6">

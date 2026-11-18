@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { InstallAppButton } from '@/components/app/install-app-button'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -87,7 +88,7 @@ const faqs = [
   {
     question: 'Do I need to install anything?',
     answer:
-      'No. StudySphere runs in your web browser. You can add it to your home screen as a progressive web app if you like.',
+      'No. StudySphere runs in your web browser and can be installed from the Install app button on supported phones and computers. On iPhone or iPad, open the site in Safari and use Share → Add to Home Screen.',
   },
   {
     question: 'What subjects can I study?',
@@ -171,6 +172,7 @@ export function HomePage() {
               <Button size="lg" variant="outline" asChild>
                 <Link to="/features">Explore Features</Link>
               </Button>
+              <InstallAppButton />
             </div>
           </div>
         </div>

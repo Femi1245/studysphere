@@ -48,4 +48,6 @@ Use a dedicated development Supabase project. Do not use real student data.
 
 - [ ] Desktop sidebar and mobile bottom nav work
 - [ ] Touch targets usable on phone width
-- [ ] Install prompt / Add to Home Screen on supported browsers (HTTPS)
+- [ ] Install button opens the native prompt in supported browsers (HTTPS)
+- [ ] iPhone/iPad install instructions show Safari Share → Add to Home Screen
+- [ ] Installed PWA opens standalone and hides the install button

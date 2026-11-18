@@ -36,7 +36,9 @@ Ensure all routes rewrite to `index.html`. A `vercel.json` is included for this.
 
 ## PWA
 
-Production builds register a service worker via `vite-plugin-pwa`. Users can install StudySphere from supported browsers (Chrome/Edge/Safari) after HTTPS deployment.
+Production builds register a service worker via `vite-plugin-pwa`. The public site and signed-in app show an **Install app** button. On supported Android/desktop browsers it opens the native install prompt; on iPhone/iPad it explains how to use Safari's **Share → Add to Home Screen** flow.
+
+Deploy over HTTPS for installation. The installed PWA opens in a standalone app window and caches the application shell. An internet connection is still required for sign-in, Supabase data, and AI features. This does not publish an APK or an App Store / Play Store listing; use the Capacitor steps in [NATIVE.md](./NATIVE.md) for native packages.
 
 ## Post-deploy smoke test
 

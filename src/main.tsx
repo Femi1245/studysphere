@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { ActiveQuizProvider } from '@/contexts/active-quiz-context'
 import { AuthProvider } from '@/contexts/auth-context'
+import { PwaInstallProvider } from '@/contexts/pwa-install-context'
 import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/ui/toast'
 import App from './App'
@@ -15,7 +16,9 @@ createRoot(document.getElementById('root')!).render(
         <AuthProvider>
           <ActiveQuizProvider>
             <ToastProvider>
-              <App />
+              <PwaInstallProvider>
+                <App />
+              </PwaInstallProvider>
             </ToastProvider>
           </ActiveQuizProvider>
         </AuthProvider>

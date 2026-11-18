@@ -1,6 +1,7 @@
 import { Menu, Moon, Sun, X } from 'lucide-react'
 import { useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
+import { InstallAppButton } from '@/components/app/install-app-button'
 import { Logo } from '@/components/brand/logo'
 import { Button } from '@/components/ui/button'
 import { brand } from '@/config/brand'
@@ -48,6 +49,7 @@ export function PublicLayout() {
           </nav>
 
           <div className="hidden items-center gap-2 md:flex">
+            <InstallAppButton />
             <Button
               type="button"
               variant="ghost"
@@ -70,6 +72,7 @@ export function PublicLayout() {
           </div>
 
           <div className="flex items-center gap-2 md:hidden">
+            <InstallAppButton compact />
             <Button
               type="button"
               variant="ghost"
